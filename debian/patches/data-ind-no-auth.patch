@@ -1,0 +1,32 @@
+diff --git a/src/server/ns_turn_server.c b/src/server/ns_turn_server.c
+index 7b90bdc..1dbd4b4 100644
+--- a/src/server/ns_turn_server.c
++++ b/src/server/ns_turn_server.c
+@@ -1106,8 +1106,11 @@ static void accept_tcp_connection(ioa_socket_handle s, void *arg)
+ 				ioa_network_buffer_set_size(nbh, len);
+ 			}
+ 
+-			/* We add integrity for both long-term and short-term indication messages */
+-			/* if(server->ct == TURN_CREDENTIALS_SHORT_TERM) */
++            /*
++             * Don't add MESSAGE-INTEGRITY attribute when long term credentials are being used
++             * as it breaks some turn clients.
++             */
++			if(server->ct == TURN_CREDENTIALS_SHORT_TERM)
+ 			{
+ 				stun_attr_add_integrity_str(server->ct,ioa_network_buffer_data(nbh),&len,ss->hmackey,ss->pwd);
+ 				ioa_network_buffer_set_size(nbh,len);
+@@ -3243,8 +3246,11 @@ static void peer_input_handler(ioa_socket_handle s, int event_type,
+ 					ioa_network_buffer_set_size(nbh, len);
+ 				}
+ 
+-				/* We add integrity for both long-term and short-term indication messages */
+-				/* if(server->ct == TURN_CREDENTIALS_SHORT_TERM) */
++                /*
++                 * Don't add MESSAGE-INTEGRITY attribute when long term credentials are being used
++                 * as it breaks some turn clients.
++                 */
++				if(server->ct == TURN_CREDENTIALS_SHORT_TERM)
+ 				{
+ 					stun_attr_add_integrity_str(server->ct,ioa_network_buffer_data(nbh),&len,ss->hmackey,ss->pwd);
+ 					ioa_network_buffer_set_size(nbh,len);
