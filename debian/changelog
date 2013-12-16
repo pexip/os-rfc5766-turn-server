@@ -1,3 +1,10 @@
+rfc5766-turn-server (2.6.5.2-1pexip1) pexip; urgency=low
+
+  * Don't send MESSAGE-INTEGRITY on data indications when using
+    long term credentials
+
+ -- John Bassett <john.bassett@pexip.com>  Mon, 16 Dec 2013 16:46:03 +0000
+
 rfc5766-turn-server (2.6.5.2-1) unstable; urgency=low
 
   * Redis memory leak fixed.
