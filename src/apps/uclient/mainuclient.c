@@ -40,6 +40,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+
 #include <openssl/ssl.h>
 #include <openssl/opensslv.h>
 
@@ -52,8 +55,6 @@ int clnet_verbose=TURN_VERBOSE_NONE;
 int use_tcp=0;
 int use_secure=0;
 int use_short_term=0;
-char cert_file[1025]="\0";
-char pkey_file[1025]="\0";
 int hang_on=0;
 ioa_addr peer_addr;
 int no_rtcp = 0;
@@ -62,14 +63,29 @@ int dont_fragment = 0;
 u08bits g_uname[STUN_MAX_USERNAME_SIZE+1];
 st_password_t g_upwd;
 int use_fingerprints = 1;
+
+static char ca_cert_file[1025]="";
+static char cipher_suite[1025]="";
+char cert_file[1025]="";
+char pkey_file[1025]="";
 SSL_CTX *root_tls_ctx[32];
 int root_tls_ctx_num = 0;
+
 u08bits relay_transport = STUN_ATTRIBUTE_TRANSPORT_UDP_VALUE;
-unsigned char client_ifname[1025] = "\0";
+unsigned char client_ifname[1025] = "";
 int passive_tcp = 0;
 int mandatory_channel_padding = 0;
 int negative_test = 0;
+int negative_protocol_test = 0;
 int dos = 0;
+
+SHATYPE shatype = SHATYPE_SHA1;
+
+int mobility = 0;
+
+int no_permissions = 0;
+
+int extra_requests = 0;
 
 //////////////// local definitions /////////////////
 
@@ -81,7 +97,7 @@ static char Usage[] =
   "		options -s, -e, -r and -g.\n"
   "	-P	Passive TCP (RFC6062 with active peer). Implies -T.\n"
   "	-S	Secure connection: TLS for TCP, DTLS for UDP.\n"
-  "     -U      Secure connection with eNULL cipher.\n"
+  "	-U	Secure connection with eNULL cipher.\n"
   "	-v	Verbose.\n"
   "	-s	Use send method.\n"
   "	-y	Use client-to-client connections.\n"
@@ -93,11 +109,21 @@ static char Usage[] =
   "		the long-term credentials mechanism if authentication is required.\n"
   "	-D	Mandatory channel padding (like in pjnath).\n"
   "	-N	Negative tests (some limited cases only).\n"
+  "	-R	Negative protocol tests.\n"
   "	-O	DOS attack mode (quick connect and exit).\n"
+  "	-H	SHA256 digest function for message integrity calculation.\n"
+  "		Without this option, by default, SHA1 is used.\n"
+  "	-M	ICE Mobility engaged.\n"
+  "	-I	Do not set permissions on TURN relay endpoints\n"
+  "     	(for testing the non-standard server relay functionality).\n"
+  "	-G	Generate extra requests (create permissions, channel bind).\n"
   "Options:\n"
   "	-l	Message length (Default: 100 Bytes).\n"
-  "	-i	Certificate file (for secure connections only).\n"
+  "	-i	Certificate file (for secure connections only, optional).\n"
   "	-k	Private key file (for secure connections only).\n"
+  "	-E	CA file for server certificate verification, \n"
+  "		if the server certificate to be verified.\n"
+  "	-F	Cipher suite for TLS/DTLS. Default value is DEFAULT.\n"
   "	-p	TURN server port (Default: 3478 unsecure, 5349 secure).\n"
   "	-n	Number of messages to send (Default: 5).\n"
   "	-d	Local interface device (optional).\n"
@@ -112,10 +138,6 @@ static char Usage[] =
   "	-C	TURN REST API username/timestamp separator symbol (character). The default value is ':'.\n";
 
 //////////////////////////////////////////////////
-
-#if !defined(SHA_DIGEST_LENGTH)
-#define SHA_DIGEST_LENGTH (20)
-#endif
 
 int main(int argc, char **argv)
 {
@@ -140,8 +162,33 @@ int main(int argc, char **argv)
 
 	ns_bzero(local_addr, sizeof(local_addr));
 
-	while ((c = getopt(argc, argv, "d:p:l:n:L:m:e:r:u:w:i:k:z:W:C:vsyhcxgtTSAPDNOU")) != -1) {
+	while ((c = getopt(argc, argv, "d:p:l:n:L:m:e:r:u:w:i:k:z:W:C:E:F:vsyhcxgtTSAPDNOUHMRIG")) != -1) {
 		switch (c){
+		case 'G':
+			extra_requests = 1;
+			break;
+		case 'F':
+			STRCPY(cipher_suite,optarg);
+			break;
+		case 'I':
+			no_permissions = 1;
+			break;
+		case 'M':
+			mobility = 1;
+			break;
+		case 'H':
+			shatype = SHATYPE_SHA256;
+			break;
+		case 'E':
+		{
+			char* fn = find_config_file(optarg,1);
+			if(!fn) {
+				fprintf(stderr,"ERROR: file %s not found\n",optarg);
+				exit(-1);
+			}
+			STRCPY(ca_cert_file,fn);
+		}
+			break;
 		case 'O':
 			dos = 1;
 			break;
@@ -153,6 +200,9 @@ int main(int argc, char **argv)
 			break;
 		case 'N':
 			negative_test = 1;
+			break;
+		case 'R':
+			negative_protocol_test = 1;
 			break;
 		case 'z':
 			RTP_PACKET_INTERVAL = atoi(optarg);
@@ -240,8 +290,8 @@ int main(int argc, char **argv)
 			}
 			STRCPY(cert_file,fn);
 			free(fn);
-			break;
 		}
+			break;
 		case 'k':
 		{
 			char* fn = find_config_file(optarg,1);
@@ -251,8 +301,8 @@ int main(int argc, char **argv)
 			}
 			STRCPY(pkey_file,fn);
 			free(fn);
-			break;
 		}
+			break;
 		default:
 			fprintf(stderr, "%s\n", Usage);
 			exit(1);
@@ -276,10 +326,20 @@ int main(int argc, char **argv)
 			STRCPY(g_uname,new_uname);
 		}
 		{
-			u08bits hmac[1025]="\0";
-			unsigned int hmac_len = SHA_DIGEST_LENGTH;
+			u08bits hmac[MAXSHASIZE];
+			unsigned int hmac_len;
 
-			if(calculate_hmac(g_uname, strlen((char*)g_uname), auth_secret, strlen(auth_secret), hmac, &hmac_len)>=0) {
+			switch(shatype) {
+			case SHATYPE_SHA256:
+				hmac_len = SHA256SIZEBYTES;
+				break;
+			default:
+				hmac_len = SHA1SIZEBYTES;
+			};
+
+			hmac[0]=0;
+
+			if(stun_calculate_hmac(g_uname, strlen((char*)g_uname), (u08bits*)auth_secret, strlen(auth_secret), hmac, &hmac_len, shatype)>=0) {
 				size_t pwd_length = 0;
 				char *pwd = base64_encode(hmac,hmac_len,&pwd_length);
 
@@ -338,9 +398,11 @@ int main(int argc, char **argv)
 		SSL_load_error_strings();
 		OpenSSL_add_ssl_algorithms();
 
-		const char *csuite = "DEFAULT";
+		const char *csuite = "DEFAULT"; //"AES256-SHA" "DH"
 		if(use_null_cipher)
-		  csuite = "eNULL";
+			csuite = "eNULL";
+		else if(cipher_suite[0])
+			csuite=cipher_suite;
 
 		if(use_tcp) {
 		  root_tls_ctx[root_tls_ctx_num] = SSL_CTX_new(SSLv23_client_method());
@@ -378,10 +440,12 @@ int main(int argc, char **argv)
 
 		int sslind = 0;
 		for(sslind = 0; sslind<root_tls_ctx_num; sslind++) {
-			if (!SSL_CTX_use_certificate_file(root_tls_ctx[sslind], cert_file,
-							SSL_FILETYPE_PEM)) {
-				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nERROR: no certificate found!\n");
-				exit(-1);
+
+			if(cert_file[0]) {
+				if (!SSL_CTX_use_certificate_chain_file(root_tls_ctx[sslind], cert_file)) {
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nERROR: no certificate found!\n");
+					exit(-1);
+				}
 			}
 
 			if (!SSL_CTX_use_PrivateKey_file(root_tls_ctx[sslind], pkey_file,
@@ -390,13 +454,31 @@ int main(int argc, char **argv)
 				exit(-1);
 			}
 
-			if (!SSL_CTX_check_private_key(root_tls_ctx[sslind])) {
-				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nERROR: invalid private key!\n");
-				exit(-1);
+			if(cert_file[0]) {
+				if (!SSL_CTX_check_private_key(root_tls_ctx[sslind])) {
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "\nERROR: invalid private key!\n");
+					exit(-1);
+				}
 			}
 
-			SSL_CTX_set_verify_depth(root_tls_ctx[sslind], 2);
-			SSL_CTX_set_read_ahead(root_tls_ctx[sslind], 1);
+			if (ca_cert_file[0]) {
+				if (!SSL_CTX_load_verify_locations(root_tls_ctx[sslind], ca_cert_file, NULL )) {
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR,
+							"ERROR: cannot load CA from file: %s\n",
+							ca_cert_file);
+				}
+
+				/* Set to require peer (client) certificate verification */
+				SSL_CTX_set_verify(root_tls_ctx[sslind], SSL_VERIFY_PEER, NULL );
+
+				/* Set the verification depth to 9 */
+				SSL_CTX_set_verify_depth(root_tls_ctx[sslind], 9);
+			} else {
+				SSL_CTX_set_verify(root_tls_ctx[sslind], SSL_VERIFY_NONE, NULL );
+			}
+
+			if(!use_tcp)
+				SSL_CTX_set_read_ahead(root_tls_ctx[sslind], 1);
 		}
 	}
 

@@ -52,9 +52,7 @@
 #include <hiredis/hiredis.h>
 #endif
 
-#if !defined(TURN_NO_THREADS)
 #include <pthread.h>
-#endif
 
 #include <signal.h>
 
@@ -67,6 +65,7 @@
 #include <event2/buffer.h>
 
 #include "userdb.h"
+#include "mainrelay.h"
 
 #include "ns_turn_utils.h"
 
@@ -760,10 +759,6 @@ static int get_auth_secrets(secrets_list_t *sl)
 	return ret;
 }
 
-#if !defined(SHA_DIGEST_LENGTH)
-#define SHA_DIGEST_LENGTH (20)
-#endif
-
 /*
  * Timestamp retrieval
  */
@@ -861,16 +856,39 @@ int get_user_key(u08bits *uname, hmackey_t key, ioa_network_buffer_handle nbh)
 
 		if(!turn_time_before(ts, ctime)) {
 
-			u08bits hmac[LONG_STRING_SIZE]="\0";
-			unsigned int hmac_len = SHA_DIGEST_LENGTH;
+			u08bits hmac[MAXSHASIZE];
+			unsigned int hmac_len;
 			st_password_t pwdtmp;
+			SHATYPE shatype;
+
+			hmac[0] = 0;
+
+			stun_attr_ref sar = stun_attr_get_first_by_type_str(ioa_network_buffer_data(nbh),
+							ioa_network_buffer_get_size(nbh),
+							STUN_ATTRIBUTE_MESSAGE_INTEGRITY);
+			if (!sar)
+				return -1;
+
+			int sarlen = stun_attr_get_len(sar);
+			switch(sarlen) {
+			case SHA1SIZEBYTES:
+				shatype = SHATYPE_SHA1;
+				hmac_len = SHA1SIZEBYTES;
+				break;
+			case SHA256SIZEBYTES:
+				shatype = SHATYPE_SHA256;
+				hmac_len = SHA256SIZEBYTES;
+				break;
+			default:
+				return -1;
+			};
 
 			for(sll=0;sll<get_secrets_list_size(&sl);++sll) {
 
 				const char* secret = get_secrets_list_elem(&sl,sll);
 
 				if(secret) {
-					if(calculate_hmac(uname, strlen((char*)uname), secret, strlen(secret), hmac, &hmac_len)>=0) {
+					if(stun_calculate_hmac(uname, strlen((char*)uname), (const u08bits*)secret, strlen(secret), hmac, &hmac_len, shatype)>=0) {
 						size_t pwd_length = 0;
 						char *pwd = base64_encode(hmac,hmac_len,&pwd_length);
 
@@ -880,11 +898,14 @@ int get_user_key(u08bits *uname, hmackey_t key, ioa_network_buffer_handle nbh)
 							} else {
 								if(stun_produce_integrity_key_str((u08bits*)uname, (u08bits*)global_realm, (u08bits*)pwd, key)>=0) {
 
+									SHATYPE sht;
+
 									if(stun_check_message_integrity_by_key_str(TURN_CREDENTIALS_LONG_TERM,
 										ioa_network_buffer_data(nbh),
 										ioa_network_buffer_get_size(nbh),
 										key,
-										pwdtmp)>0) {
+										pwdtmp,
+										&sht)>0) {
 
 										ret = 0;
 									}
@@ -1169,7 +1190,7 @@ int check_new_allocation_quota(u08bits *user)
 				ur_string_map_put(users->alloc_counters, (ur_string_map_key_type) username, value);
 				++(users->total_current_allocs);
 			} else {
-				if ((users->user_quota) && ((size_t) value >= users->user_quota)) {
+				if ((users->user_quota) && ((size_t) value >= (size_t)(users->user_quota))) {
 					ret = -1;
 				} else {
 					value = (ur_string_map_value_type)(((size_t)value) + 1);
@@ -1766,6 +1787,10 @@ int adminuser(u08bits *user, u08bits *realm, u08bits *pwd, u08bits *secret, TURN
 		if(is_st) {
 			strncpy((char*)passwd,(char*)pwd,sizeof(st_password_t));
 		} else {
+			if(!(realm[0])) {
+				TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Error: with long-term mechanism, you must specify the realm !\n");
+				exit(-1);
+			}
 			stun_produce_integrity_key_str(user, realm, pwd, key);
 			size_t i = 0;
 			int maxsz = (int)sizeof(skey);
@@ -2057,7 +2082,6 @@ void auth_ping(void)
 
 ///////////////// WHITE/BLACK IP LISTS ///////////////////
 
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 static pthread_rwlock_t* whitelist_rwlock = NULL;
 static pthread_rwlock_t* blacklist_rwlock = NULL;
@@ -2065,14 +2089,12 @@ static pthread_rwlock_t* blacklist_rwlock = NULL;
 static turn_mutex whitelist_mutex;
 static turn_mutex blacklist_mutex;
 #endif
-#endif
 
 static ip_range_list_t* ipwhitelist = NULL;
 static ip_range_list_t* ipblacklist = NULL;
 
 void init_dynamic_ip_lists(void)
 {
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	whitelist_rwlock = (pthread_rwlock_t*) turn_malloc(sizeof(pthread_rwlock_t));
 	pthread_rwlock_init(whitelist_rwlock, NULL);
@@ -2083,40 +2105,33 @@ void init_dynamic_ip_lists(void)
 	turn_mutex_init(&whitelist_mutex);
 	turn_mutex_init(&blacklist_mutex);
 #endif
-#endif
 }
 
 void ioa_lock_whitelist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_rdlock(whitelist_rwlock);
 #else
 	turn_mutex_lock(&whitelist_mutex);
 #endif
-#endif
 }
 void ioa_unlock_whitelist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_unlock(whitelist_rwlock);
 #else
 	turn_mutex_unlock(&whitelist_mutex);
 #endif
-#endif
 }
 static void ioa_wrlock_whitelist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_wrlock(whitelist_rwlock);
 #else
 	turn_mutex_lock(&whitelist_mutex);
-#endif
 #endif
 }
 const ip_range_list_t* ioa_get_whitelist(ioa_engine_handle e)
@@ -2128,34 +2143,28 @@ const ip_range_list_t* ioa_get_whitelist(ioa_engine_handle e)
 void ioa_lock_blacklist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_rdlock(blacklist_rwlock);
 #else
 	turn_mutex_lock(&blacklist_mutex);
 #endif
-#endif
 }
 void ioa_unlock_blacklist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_unlock(blacklist_rwlock);
 #else
 	turn_mutex_unlock(&blacklist_mutex);
 #endif
-#endif
 }
 static void ioa_wrlock_blacklist(ioa_engine_handle e)
 {
 	UNUSED_ARG(e);
-#if !defined(TURN_NO_THREADS)
 #if !defined(TURN_NO_RWLOCK)
 	pthread_rwlock_wrlock(blacklist_rwlock);
 #else
 	turn_mutex_lock(&blacklist_mutex);
-#endif
 #endif
 }
 const ip_range_list_t* ioa_get_blacklist(ioa_engine_handle e)

@@ -58,10 +58,10 @@ static u64bits current_mstime = 0;
 
 static char buffer_to_send[65536]="\0";
 
-#define MAX_CLIENTS (1024)
 static int total_clients = 0;
 
-static app_ur_session* elems[MAX_CLIENTS];
+/* Patch for unlimited number of clients provided by ucudbm@gmail.com */
+static app_ur_session** elems = NULL;
 
 #define SLEEP_INTERVAL (2345)
 
@@ -111,6 +111,7 @@ static app_ur_session* init_app_session(app_ur_session *ss) {
   if(ss) {
     ns_bzero(ss,sizeof(app_ur_session));
     ss->pinfo.fd=-1;
+    ss->pinfo.shatype = shatype;
   }
   return ss;
 }
@@ -188,6 +189,17 @@ int send_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int data_con
 	int ret = -1;
 
 	char *buffer = (char*) (message->buf);
+
+	if(negative_protocol_test && (message->len>0)) {
+		if(random()%10 == 0) {
+			int np = (int)((unsigned long)random()%10);
+			while(np-->0) {
+				int pos = (int)((unsigned long)random()%(unsigned long)message->len);
+				int val = (int)((unsigned long)random()%256);
+				message->buf[pos]=(u08bits)val;
+			}
+		}
+	}
 
 	SSL *ssl = clnet_info->ssl;
 	ioa_socket_raw fd = clnet_info->fd;
@@ -286,26 +298,27 @@ int send_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int data_con
 	return ret;
 }
 
-int recv_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int sync, app_tcp_conn_info *atc) {
+int recv_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int sync,
+		app_tcp_conn_info *atc) {
 
 	int rc = 0;
 
 	ioa_socket_raw fd = clnet_info->fd;
-	if(atc)
+	if (atc)
 		fd = atc->tcp_data_fd;
 
 	SSL* ssl = clnet_info->ssl;
-	if(atc)
-		ssl=atc->tcp_data_ssl;
+	if (atc)
+		ssl = atc->tcp_data_ssl;
 
-	if(!use_secure && !use_tcp && fd>=0) {
+	if (!use_secure && !use_tcp && fd >= 0) {
 
 		/* Plain UDP */
 
 		do {
 			rc = recv(fd, message->buf, sizeof(message->buf) - 1, 0);
-			if(rc<0 && errno==EAGAIN && sync)
-				errno=EINTR;
+			if (rc < 0 && errno == EAGAIN && sync)
+				errno = EINTR;
 		} while (rc < 0 && (errno == EINTR));
 
 		if (rc < 0) {
@@ -314,32 +327,29 @@ int recv_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int sync, ap
 
 		message->len = rc;
 
-	} else if(use_secure && ssl && !(clnet_info->broken)) {
+	} else if (use_secure && ssl && !(clnet_info->broken)) {
 
 		/* TLS/DTLS */
 
 		int message_received = 0;
 		int cycle = 0;
-		while (!message_received && cycle++<100) {
+		while (!message_received && cycle++ < 100) {
 
 			if (SSL_get_shutdown(ssl))
 				return -1;
 
 			rc = 0;
 			do {
-				rc = SSL_read(ssl, message->buf,
-								sizeof(message->buf) - 1);
-				if(rc<0 && errno==EAGAIN && sync)
+				rc = SSL_read(ssl, message->buf, sizeof(message->buf) - 1);
+				if (rc < 0 && errno == EAGAIN && sync)
 					continue;
 			} while (rc < 0 && (errno == EINTR));
 
 			if (rc > 0) {
 
 				if (clnet_verbose) {
-					TURN_LOG_FUNC(
-									TURN_LOG_LEVEL_INFO,
-									"response received: size=%d\n",
-									rc);
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,
+							"response received: size=%d\n", rc);
 				}
 				message->len = rc;
 				message_received = 1;
@@ -348,7 +358,7 @@ int recv_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int sync, ap
 
 				int sslerr = SSL_get_error(ssl, rc);
 
-				switch (sslerr){
+				switch (sslerr) {
 				case SSL_ERROR_NONE:
 					/* Try again ? */
 					break;
@@ -363,96 +373,92 @@ int recv_buffer(app_ur_conn_info *clnet_info, stun_buffer* message, int sync, ap
 					break;
 				case SSL_ERROR_SYSCALL:
 					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,
-									"Socket read error 111.999: \n");
+							"Socket read error 111.999: \n");
 					if (handle_socket_error())
 						break;
-				case SSL_ERROR_SSL:
-				{
-					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,
-									"SSL write error: \n");
+				case SSL_ERROR_SSL: {
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "SSL write error: \n");
 					char buf[1024];
-					TURN_LOG_FUNC(
-									TURN_LOG_LEVEL_INFO,
-									"%s (%d)\n",
-									ERR_error_string(
-													ERR_get_error(),
-													buf),
-									SSL_get_error(
-													ssl,
-													rc));
+					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "%s (%d)\n",
+							ERR_error_string(ERR_get_error(), buf),
+							SSL_get_error(ssl, rc));
 				}
 				default:
 					clnet_info->broken = 1;
 					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,
-									"Unexpected error while reading: rc=%d, sslerr=%d\n",rc,sslerr);
+							"Unexpected error while reading: rc=%d, sslerr=%d\n",
+							rc, sslerr);
 					return -1;
 				}
 
-				if(!sync)
-				  break;
+				if (!sync)
+					break;
 			}
 		}
 
-	} else if(!use_secure && use_tcp && fd>=0){
+	} else if (!use_secure && use_tcp && fd >= 0) {
 
-	  /* Plain TCP */
+		/* Plain TCP */
 
-	  do {
-	    rc = recv(fd, message->buf, sizeof(message->buf) - 1, MSG_PEEK);
-	    if((rc<0) && (errno==EAGAIN) && sync) {
-	      errno=EINTR;
-	    }
-	  } while (rc < 0 && (errno == EINTR));
-	    
-	  if(rc>0) {
-	    int mlen = rc;
-	    size_t app_msg_len = (size_t)rc;
-	    if(!atc) {
-	      mlen = stun_get_message_len_str(message->buf, rc, 1, &app_msg_len);
-	    } else {
-	      if(!sync)
-		mlen = clmessage_length;
-
-	      if(mlen>clmessage_length)
-		mlen = clmessage_length;
-
-	      app_msg_len = (size_t)mlen;
-	    }
-	      
-	    if(mlen>0) {
-
-	      int rcr = 0;
-	      int rsf = 0;
-	      int cycle = 0;
-	      while(rsf<mlen && cycle++<128) {
 		do {
-		  rcr = recv(fd, message->buf+rsf, (size_t)mlen-(size_t)rsf, 0);
-		  if(rcr<0 && errno==EAGAIN && sync)
-		    errno=EINTR;
-		} while (rcr < 0 && (errno == EINTR));
-	      
-		if (rcr > 0)
-		  rsf+= rcr;
-	      
-	      }
+			rc = recv(fd, message->buf, sizeof(message->buf) - 1, MSG_PEEK);
+			if ((rc < 0) && (errno == EAGAIN) && sync) {
+				errno = EINTR;
+			}
+		} while (rc < 0 && (errno == EINTR));
 
-	      if(rsf<1)
-		return -1;
+		if (rc > 0) {
+			int mlen = rc;
+			size_t app_msg_len = (size_t) rc;
+			if (!atc) {
+				mlen = stun_get_message_len_str(message->buf, rc, 1,
+						&app_msg_len);
+			} else {
+				if (!sync)
+					mlen = clmessage_length;
 
-	      if(rsf<(int)app_msg_len) {
-		      if((size_t)(app_msg_len/(size_t)rsf)*((size_t)(rsf)) != app_msg_len) {
-			      return -1;
-		      }
-	      }
+				if (mlen > clmessage_length)
+					mlen = clmessage_length;
 
-	      message->len = app_msg_len;
+				app_msg_len = (size_t) mlen;
+			}
 
-	      rc = app_msg_len;
+			if (mlen > 0) {
 
-	    } else {
-	      rc = 0;
-	    }
-	  }
+				int rcr = 0;
+				int rsf = 0;
+				int cycle = 0;
+				while (rsf < mlen && cycle++ < 128) {
+					do {
+						rcr = recv(fd, message->buf + rsf,
+								(size_t) mlen - (size_t) rsf, 0);
+						if (rcr < 0 && errno == EAGAIN && sync)
+							errno = EINTR;
+					} while (rcr < 0 && (errno == EINTR));
+
+					if (rcr > 0)
+						rsf += rcr;
+
+				}
+
+				if (rsf < 1)
+					return -1;
+
+				if (rsf < (int) app_msg_len) {
+					if ((size_t) (app_msg_len / (size_t) rsf) * ((size_t) (rsf))
+							!= app_msg_len) {
+						return -1;
+					}
+				}
+
+				message->len = app_msg_len;
+
+				rc = app_msg_len;
+
+			} else {
+				rc = 0;
+			}
+		}
 	}
 
 	return rc;
@@ -516,9 +522,10 @@ static int client_read(app_ur_session *elem, int is_tcp_data, app_tcp_conn_info 
 		} else if (stun_is_indication(&(elem->in_buffer))) {
 
 			if(use_short_term) {
+				SHATYPE sht = elem->pinfo.shatype;
 				if(stun_check_message_integrity_str(get_turn_credentials_type(),
 							elem->in_buffer.buf, (size_t)(elem->in_buffer.len), g_uname,
-							elem->pinfo.realm, g_upwd)<1) {
+							elem->pinfo.realm, g_upwd, &sht)<1) {
 					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,"Wrong integrity in indication message 0x%x received from server\n",(unsigned int)stun_get_method(&(elem->in_buffer)));
 					return -1;
 				}
@@ -538,7 +545,7 @@ static int client_read(app_ur_session *elem, int is_tcp_data, app_tcp_conn_info 
 				  sar = stun_attr_get_next_str(elem->in_buffer.buf,elem->in_buffer.len,sar);
 			  }
 			  if(negative_test) {
-				  tcp_data_connect(elem,(u32bits)random());
+				  tcp_data_connect(elem,(u64bits)random());
 			  } else {
 				  /* positive test */
 				  tcp_data_connect(elem,cid);
@@ -572,9 +579,10 @@ static int client_read(app_ur_session *elem, int is_tcp_data, app_tcp_conn_info 
 		} else if (stun_is_success_response(&(elem->in_buffer))) {
 
 			if(elem->pinfo.nonce[0] || use_short_term) {
+				SHATYPE sht = elem->pinfo.shatype;
 				if(stun_check_message_integrity_str(get_turn_credentials_type(),
 								elem->in_buffer.buf, (size_t)(elem->in_buffer.len), g_uname,
-								elem->pinfo.realm, g_upwd)<0) {
+								elem->pinfo.realm, g_upwd, &sht)<0) {
 					TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO,"Wrong integrity in success message 0x%x received from server\n",(unsigned int)stun_get_method(&(elem->in_buffer)));
 					return -1;
 				}
@@ -598,6 +606,9 @@ static int client_read(app_ur_session *elem, int is_tcp_data, app_tcp_conn_info 
 		} else if (stun_is_challenge_response_str(elem->in_buffer.buf, (size_t)elem->in_buffer.len,
 							&err_code,err_msg,sizeof(err_msg),
 							clnet_info->realm,clnet_info->nonce)) {
+			if(err_code == SHA_TOO_WEAK && (elem->pinfo.shatype == SHATYPE_SHA1)) {
+				elem->pinfo.shatype = SHATYPE_SHA256;
+			}
 			if(is_TCP_relay() && (stun_get_method(&(elem->in_buffer)) == STUN_METHOD_CONNECT)) {
 				turn_tcp_connect(clnet_verbose, &(elem->pinfo), &(elem->pinfo.peer_addr));
 			} else if(stun_get_method(&(elem->in_buffer)) == STUN_METHOD_REFRESH) {
@@ -841,6 +852,7 @@ static int start_client(const char *remote_address, int port,
   app_ur_conn_info clnet_info_probe; /* for load balancing probe */
   ns_bzero(&clnet_info_probe,sizeof(clnet_info_probe));
   clnet_info_probe.fd = -1;
+  clnet_info_probe.shatype = shatype;
 
   app_ur_conn_info *clnet_info=&(ss->pinfo);
   app_ur_conn_info *clnet_info_rtcp=NULL;
@@ -936,6 +948,7 @@ static int start_c2c(const char *remote_address, int port,
   app_ur_conn_info clnet_info_probe; /* for load balancing probe */
   ns_bzero(&clnet_info_probe,sizeof(clnet_info_probe));
   clnet_info_probe.fd = -1;
+  clnet_info_probe.shatype = shatype;
 
   app_ur_conn_info *clnet_info1=&(ss1->pinfo);
   app_ur_conn_info *clnet_info1_rtcp=NULL;
@@ -1079,13 +1092,15 @@ static int refresh_channel(app_ur_session* elem, u16bits method)
 
 	if (!addr_any(&(elem->pinfo.peer_addr))) {
 
-		if (!method || (method == STUN_METHOD_CREATE_PERMISSION)) {
-			stun_init_request(STUN_METHOD_CREATE_PERMISSION, &message);
-			stun_attr_add_addr(&message, STUN_ATTRIBUTE_XOR_PEER_ADDRESS, &(elem->pinfo.peer_addr));
-			if(add_integrity(clnet_info, &message)<0) return -1;
-			if(use_fingerprints)
+		if(!no_permissions) {
+			if (!method || (method == STUN_METHOD_CREATE_PERMISSION)) {
+				stun_init_request(STUN_METHOD_CREATE_PERMISSION, &message);
+				stun_attr_add_addr(&message, STUN_ATTRIBUTE_XOR_PEER_ADDRESS, &(elem->pinfo.peer_addr));
+				if(add_integrity(clnet_info, &message)<0) return -1;
+				if(use_fingerprints)
 				    stun_attr_add_fingerprint_str(message.buf, (size_t*) &(message.len));
-			send_buffer(&(elem->pinfo), &message, 0,0);
+				send_buffer(&(elem->pinfo), &message, 0,0);
+			}
 		}
 
 		if (!method || (method == STUN_METHOD_CHANNEL_BIND)) {
@@ -1193,12 +1208,14 @@ void start_mclient(const char *remote_address, int port,
 	      ++mclient;
 	}
 
+	elems = (app_ur_session**)malloc(sizeof(app_ur_session)*((mclient*2)+1)+sizeof(void*));
+
 	__turn_getMSTime();
 	u32bits stime = current_time;
 
-	memset(buffer_to_send, random(), clmessage_length);
+	memset(buffer_to_send, 7, clmessage_length);
 
-	client_event_base = event_base_new();
+	client_event_base = turn_event_base_new();
 
 	int i = 0;
 	int tot_clients = 0;
@@ -1372,6 +1389,8 @@ void start_mclient(const char *remote_address, int port,
 				((double)total_jitter/(double)tot_recv_messages),
 				(unsigned long)min_jitter,
 				(unsigned long)max_jitter);
+
+	free(elems);
 }
 
 ///////////////////////////////////////////
@@ -1386,13 +1405,13 @@ turn_credential_type get_turn_credentials_type(void)
 int add_integrity(app_ur_conn_info *clnet_info, stun_buffer *message)
 {
 	if(use_short_term) {
-		if(stun_attr_add_integrity_by_user_short_term_str(message->buf, (size_t*)&(message->len), g_uname, g_upwd)<0) {
+		if(stun_attr_add_integrity_by_user_short_term_str(message->buf, (size_t*)&(message->len), g_uname, g_upwd, clnet_info->shatype)<0) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO," Cannot add integrity to the message\n");
 			return -1;
 		}
 	} else if(clnet_info->nonce[0]) {
 		if(stun_attr_add_integrity_by_user_str(message->buf, (size_t*)&(message->len), g_uname,
-					clnet_info->realm, g_upwd, clnet_info->nonce)<0) {
+					clnet_info->realm, g_upwd, clnet_info->nonce, clnet_info->shatype)<0) {
 			TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO," Cannot add integrity to the message\n");
 			return -1;
 		}
@@ -1402,3 +1421,4 @@ int add_integrity(app_ur_conn_info *clnet_info, stun_buffer *message)
 }
 
 ///////////////////////////////////////////
+

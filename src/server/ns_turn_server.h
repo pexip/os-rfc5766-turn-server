@@ -43,19 +43,19 @@ extern "C" {
 extern int TURN_MAX_ALLOCATE_TIMEOUT;
 extern int TURN_MAX_ALLOCATE_TIMEOUT_STUN_ONLY;
 
-typedef u32bits turnserver_id;
+typedef u08bits turnserver_id;
+
+enum _MESSAGE_TO_RELAY_TYPE {
+	RMT_UNKNOWN = 0,
+	RMT_SOCKET,
+	RMT_CB_SOCKET,
+	RMT_MOBILE_SOCKET
+};
+typedef enum _MESSAGE_TO_RELAY_TYPE MESSAGE_TO_RELAY_TYPE;
 
 struct socket_message {
 	ioa_socket_handle s;
 	ioa_net_data nd;
-};
-
-struct cb_socket_message {
-	turnserver_id id;
-	u32bits connection_id;
-	stun_tid tid;
-	ioa_socket_handle s;
-	int message_integrity;
 };
 
 struct _turn_turnserver;
@@ -71,16 +71,24 @@ typedef void (*get_username_resume_cb)(int success, hmackey_t hmackey, st_passwo
 typedef u08bits *(*get_user_key_cb)(turnserver_id id, u08bits *uname, get_username_resume_cb resume, ioa_net_data *in_buffer, u64bits ctxkey, int *postpone_reply);
 typedef int (*check_new_allocation_quota_cb)(u08bits *username);
 typedef void (*release_allocation_quota_cb)(u08bits *username);
-typedef int (*send_cb_socket_to_relay_cb)(turnserver_id id, u32bits connection_id, stun_tid *tid, ioa_socket_handle s, int message_integrity);
+typedef int (*send_socket_to_relay_cb)(turnserver_id id, u64bits cid, stun_tid *tid, ioa_socket_handle s, int message_integrity, MESSAGE_TO_RELAY_TYPE rmt, ioa_net_data *nd);
+typedef int (*send_turn_session_info_cb)(struct turn_session_info *tsi);
 
 //////////// ALTERNATE-SERVER /////////////
 
 struct _turn_server_addrs_list {
 	ioa_addr *addrs;
-	size_t size;
+	volatile size_t size;
+	turn_mutex m;
 };
 
 typedef struct _turn_server_addrs_list turn_server_addrs_list_t;
+
+void init_turn_server_addrs_list(turn_server_addrs_list_t *l);
+
+typedef volatile int vint;
+
+typedef vint* vintp;
 
 ///////////////////////////////////////////
 
@@ -95,22 +103,25 @@ turn_turnserver* create_turn_server(turnserver_id id, int verbose,
 				    check_new_allocation_quota_cb chquotacb,
 				    release_allocation_quota_cb raqcb,
 				    ioa_addr *external_addr,
-				    int no_tcp_relay,
-				    int no_udp_relay,
-				    int stale_nonce,
-				    int stun_only,
+				    vintp no_tcp_relay,
+				    vintp no_udp_relay,
+				    vintp stale_nonce,
+				    vintp stun_only,
+				    vintp no_stun,
 				    turn_server_addrs_list_t *alternate_servers_list,
 				    turn_server_addrs_list_t *tls_alternate_servers_list,
 				    turn_server_addrs_list_t *aux_servers_list,
 				    int self_udp_balance,
-				    int no_multicast_peers,
-				    int no_loopback_peers,
+				    vintp no_multicast_peers,
+				    vintp no_loopback_peers,
 				    ip_range_list_t* ip_whitelist,
 				    ip_range_list_t* ip_blacklist,
-				    send_cb_socket_to_relay_cb rfc6062cb,
-				    int secure_stun);
-
-void delete_turn_server(turn_turnserver* server);
+				    send_socket_to_relay_cb send_socket_to_relay,
+				    vintp secure_stun,
+				    SHATYPE shatype,
+				    vintp mobility,
+				    vintp server_relay,
+				    send_turn_session_info_cb send_turn_session_info);
 
 ioa_engine_handle turn_server_get_engine(turn_turnserver *s);
 
@@ -124,10 +135,14 @@ void set_rfc5780(turn_turnserver *server, get_alt_addr_cb cb, send_message_cb sm
 ///////////////////////////////////////////
 
 int open_client_connection_session(turn_turnserver* server, struct socket_message *sm);
-int shutdown_client_connection(turn_turnserver *server, ts_ur_super_session *ss);
+int shutdown_client_connection(turn_turnserver *server, ts_ur_super_session *ss, int force);
 void set_disconnect_cb(turn_turnserver* server, int (*disconnect)(ts_ur_super_session*));
 
-int turnserver_accept_tcp_connection(turn_turnserver *server, tcp_connection_id tcid, stun_tid *tid, ioa_socket_handle s, int message_integrity);
+int turnserver_accept_tcp_client_data_connection(turn_turnserver *server, tcp_connection_id tcid, stun_tid *tid, ioa_socket_handle s, int message_integrity);
+
+int report_turn_session_info(turn_turnserver *server, ts_ur_super_session *ss, int force_invalid);
+
+turn_time_t get_turn_server_time(turn_turnserver *server);
 
 ///////////////////////////////////////////
 
