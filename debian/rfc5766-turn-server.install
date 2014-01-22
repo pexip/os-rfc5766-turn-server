@@ -39,15 +39,9 @@ examples/scripts/longtermsecure/secure_tls_client_c2c_tcp_relay.sh usr/share/rfc
 examples/scripts/longtermsecure/secure_tls_client.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecure
 examples/scripts/longtermsecure/secure_udp_c2c.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecure
 examples/scripts/longtermsecure/secure_udp_client.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecure
-examples/scripts/longtermsecuredb/secure_relay_with_db_psql.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecuredb
-examples/scripts/longtermsecuredb/secure_relay_with_db_mysql.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecuredb
-examples/scripts/longtermsecuredb/secure_relay_with_db_redis.sh usr/share/rfc5766-turn-server/examples/scripts/longtermsecuredb
 examples/scripts/selfloadbalance/secure_relay.sh usr/share/rfc5766-turn-server/examples/scripts/selfloadbalance
 examples/scripts/selfloadbalance/secure_dos_attack.sh usr/share/rfc5766-turn-server/examples/scripts/selfloadbalance
 examples/scripts/restapi/secure_relay_secret.sh usr/share/rfc5766-turn-server/examples/scripts/restapi
-examples/scripts/restapi/secure_relay_secret_with_db_mysql.sh usr/share/rfc5766-turn-server/examples/scripts/restapi
-examples/scripts/restapi/secure_relay_secret_with_db_psql.sh usr/share/rfc5766-turn-server/examples/scripts/restapi
-examples/scripts/restapi/secure_relay_secret_with_db_redis.sh usr/share/rfc5766-turn-server/examples/scripts/restapi
 examples/scripts/restapi/secure_udp_client_with_secret.sh usr/share/rfc5766-turn-server/examples/scripts/restapi
 examples/scripts/restapi/shared_secret_maintainer.pl usr/share/rfc5766-turn-server/examples/scripts/restapi
 examples/scripts/shorttermsecure/secure_tcp_client_c2c_tcp_relay_short_term.sh usr/share/rfc5766-turn-server/examples/scripts/shorttermsecure
