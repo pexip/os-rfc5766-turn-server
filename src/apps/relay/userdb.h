@@ -65,10 +65,9 @@ struct auth_message {
 
 struct _turn_user_db {
 	turn_credential_type ct;
-	u08bits realm[STUN_MAX_REALM_SIZE+1];
-	size_t total_quota;
-	size_t user_quota;
-	size_t total_current_allocs;
+	vint total_quota;
+	vint user_quota;
+	vint total_current_allocs;
 	ur_string_map *static_accounts;
 	ur_string_map *dynamic_accounts;
 	ur_string_map *alloc_counters;
@@ -114,8 +113,6 @@ extern int anon_credentials;
 extern turn_user_db *users;
 
 extern s08bits global_realm[STUN_MAX_REALM_SIZE+1];
-
-extern void send_auth_message_to_auth_server(struct auth_message *am);
 
 /////////// SHARED SECRETS //////////////////
 

@@ -33,9 +33,7 @@
 
 #include <time.h>
 
-#if !defined(TURN_NO_THREADS)
 #include <pthread.h>
-#endif
 
 #include <syslog.h>
 #include <stdarg.h>
@@ -45,14 +43,19 @@
 
 ////////// LOG TIME OPTIMIZATION ///////////
 
+static volatile turn_time_t log_start_time = 0;
 volatile int _log_time_value_set = 0;
 volatile turn_time_t _log_time_value = 0;
 
 static inline turn_time_t log_time(void)
 {
-	if(_log_time_value_set)
-		return _log_time_value;
-	return turn_time();
+  if(!log_start_time)
+    log_start_time = turn_time();
+
+  if(_log_time_value_set)
+    return (_log_time_value - log_start_time);
+
+  return (turn_time() - log_start_time);
 }
 
 ////////// MUTEXES /////////////
@@ -62,9 +65,7 @@ static inline turn_time_t log_time(void)
 int turn_mutex_lock(const turn_mutex *mutex) {
   if(mutex && mutex->mutex && (mutex->data == MAGIC_CODE)) {
     int ret = 0;
-#if !defined(TURN_NO_THREADS)
     ret = pthread_mutex_lock((pthread_mutex_t*)mutex->mutex);
-#endif
     if(ret<0) {
       perror("Mutex lock");
     }
@@ -78,9 +79,7 @@ int turn_mutex_lock(const turn_mutex *mutex) {
 int turn_mutex_unlock(const turn_mutex *mutex) {
   if(mutex && mutex->mutex && (mutex->data == MAGIC_CODE)) {
     int ret = 0;
-#if !defined(TURN_NO_THREADS)
     ret = pthread_mutex_unlock((pthread_mutex_t*)mutex->mutex);
-#endif
     if(ret<0) {
       perror("Mutex unlock");
     }
@@ -94,12 +93,8 @@ int turn_mutex_unlock(const turn_mutex *mutex) {
 int turn_mutex_init(turn_mutex* mutex) {
   if(mutex) {
     mutex->data=MAGIC_CODE;
-#if !defined(TURN_NO_THREADS)
     mutex->mutex=turn_malloc(sizeof(pthread_mutex_t));
     pthread_mutex_init((pthread_mutex_t*)mutex->mutex,NULL);
-#else
-    mutex->mutex=turn_malloc(1);
-#endif
     return 0;
   } else {
     return -1;
@@ -109,7 +104,6 @@ int turn_mutex_init(turn_mutex* mutex) {
 int turn_mutex_init_recursive(turn_mutex* mutex) {
 	int ret = -1;
 	if (mutex) {
-#if !defined(TURN_NO_THREADS)
 		pthread_mutexattr_t attr;
 		if (pthread_mutexattr_init(&attr) < 0) {
 			perror("Cannot init mutex attr");
@@ -129,11 +123,6 @@ int turn_mutex_init_recursive(turn_mutex* mutex) {
 			}
 			pthread_mutexattr_destroy(&attr);
 		}
-#else
-		mutex->mutex=malloc(1);
-		mutex->data=MAGIC_CODE;
-		ret = 0;
-#endif
 	}
   return ret;
 }
@@ -141,12 +130,8 @@ int turn_mutex_init_recursive(turn_mutex* mutex) {
 int turn_mutex_destroy(turn_mutex* mutex) {
   if(mutex && mutex->mutex && mutex->data == MAGIC_CODE) {
     int ret = 0;
-#if !defined(TURN_NO_THREADS)
     ret = pthread_mutex_destroy((pthread_mutex_t*)(mutex->mutex));
     turn_free(mutex->mutex, sizeof(pthread_mutex_t));
-#else
-    turn_free(mutex->mutex, 1);
-#endif
     mutex->mutex=NULL;
     mutex->data=0;
     return ret;
@@ -185,12 +170,19 @@ void turn_log_func_default(TURN_LOG_LEVEL level, const s08bits* format, ...)
 #if defined(TURN_LOG_FUNC_IMPL)
 		TURN_LOG_FUNC_IMPL(level,format,args);
 #else
+#define MAX_RTPPRINTF_BUFFER_SIZE (1024)
+		char s[MAX_RTPPRINTF_BUFFER_SIZE+1];
+#undef MAX_RTPPRINTF_BUFFER_SIZE
 		if (level == TURN_LOG_LEVEL_ERROR) {
-			printf("%lu: ERROR: ",(unsigned long)log_time());
-			vprintf(format, args);
+			snprintf(s,sizeof(s)-100,"%lu: ERROR: ",(unsigned long)log_time());
+			size_t slen = strlen(s);
+			vsnprintf(s+slen,sizeof(s)-slen-1,format, args);
+			fwrite(s,strlen(s),1,stdout);
 		} else if(!no_stdout_log) {
-			printf("%lu: ",(unsigned long)log_time());
-			vprintf(format, args);
+			snprintf(s,sizeof(s)-100,"%lu: ",(unsigned long)log_time());
+			size_t slen = strlen(s);
+			vsnprintf(s+slen,sizeof(s)-slen-1,format, args);
+			fwrite(s,strlen(s),1,stdout);
 		}
 #endif
 		va_end(args);
@@ -230,7 +222,7 @@ void addr_debug_print(int verbose, const ioa_addr *addr, const s08bits* s)
 	}
 }
 
-/******* Log ************/
+/*************************************/
 
 #define FILE_STR_LEN (1025)
 

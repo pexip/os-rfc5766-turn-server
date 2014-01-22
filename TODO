@@ -4,13 +4,13 @@
 
 ==================================================================
 
-1) Fedora package.
+1) Fedora official package (turnserver or rfc5766-turn-server ? TBD).
 
 2) MS Windows support.
 
 	Cygwin is supported. A "real" MS-Windows port would 
 	involve a usable GUI.
-	
+
 ==================================================================
 
 ###   II. DOCS   ###
@@ -36,6 +36,11 @@
 ==================================================================
 
 1) A smarter load balancer has to be implemented.
+
+	If the load-balancer can perform deep-packet-inspection and 
+	route the related sessions to the right server, then a real
+	load-balancer without client involvement (like 300 error support) 
+	can be implemented.
  
 	The load balancer has to have a heartbeat channels with 
 	the slave servers, currently it is only just a dumb 
@@ -53,9 +58,7 @@
 	I/O technique, but still the underlying stock TCP/IP stack 
 	is a limitation.  
 	
-3) Multiple authentication servers, each in a separate thread.
-
-4) Memory fragmentation solution.
+3) Multiple authentication threads.
 
 ==================================================================
 
@@ -65,11 +68,7 @@
 
 1) RADIUS integration ?
 
-2) Add SHA256 security.
-
-	SHA1 is mandatory according to RFC5766. But it would be 
-	nice to have SHA256, as an option. I guess that for some 
-	applications the additional CPU load can be justified.
+2) Watch new TURN security draft. oAuth integration.
 
 ==================================================================
 
@@ -77,10 +76,10 @@
 
 ==================================================================
 
-1) Follow the draft ICE endpoint mobility standard and implement 
-it if it is accepted:
+1) Follow the draft ICE endpoint mobility standard and add changes 
+when necessary:
 
-   http://tools.ietf.org/id/draft-wing-mmusic-ice-mobility-04.html#rfc.section.5.1
+   https://ietf.org/doc/draft-wing-mmusic-ice-mobility/
 
 2) For extra difficult NAT/FWs, consider implementing Websockets.
 
@@ -91,7 +90,6 @@ it if it is accepted:
 ###   VII. MISC FEATURES   ###
 
 ==================================================================
-
 
 1) Locale support (?).
 
@@ -110,12 +108,12 @@ it if it is accepted:
 	these features are available through the shell command 
 	line and through Redis command line.
 
-	Also, Redis status data to be extended.
-
 3) Traffic recording (for selected allocations).
 
 	That would be a helpful feature for a large enterprise 
 	(for testing and security purposes). 
+
+4) Ganglia monitoring.
 
 ==================================================================
 
@@ -123,7 +121,7 @@ it if it is accepted:
 
 ==================================================================
 
-1) Remove C++ compilation warnings in Solaris.
+Nope
 
 ==================================================================
 

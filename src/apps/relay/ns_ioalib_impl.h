@@ -39,9 +39,7 @@
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
 
-#if !defined(TURN_NO_THREADS)
 #include <event2/thread.h>
-#endif
 
 #include <openssl/ssl.h>
 
@@ -53,6 +51,8 @@
 
 #include "apputils.h"
 #include "stun_buffer.h"
+
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -79,21 +79,34 @@ typedef struct _stun_buffer_list {
 } stun_buffer_list;
 
 typedef unsigned long band_limit_t;
-#define SECS_PER_JIFFIE (1)
 
 /*
  * New connection callback
  */
 
-enum _MESSAGE_TO_RELAY_TYPE {
-	RMT_UNKNOWN,
-	RMT_SOCKET,
-	RMT_CB_SOCKET
+struct cb_socket_message {
+	turnserver_id id;
+	tcp_connection_id connection_id;
+	stun_tid tid;
+	ioa_socket_handle s;
+	int message_integrity;
 };
-typedef enum _MESSAGE_TO_RELAY_TYPE MESSAGE_TO_RELAY_TYPE;
+
+struct relay_server {
+	turnserver_id id;
+	struct event_base* event_base;
+	struct bufferevent *in_buf;
+	struct bufferevent *out_buf;
+	struct bufferevent *auth_in_buf;
+	struct bufferevent *auth_out_buf;
+	ioa_engine_handle ioa_eng;
+	turn_turnserver *server;
+	pthread_t thr;
+};
 
 struct message_to_relay {
 	MESSAGE_TO_RELAY_TYPE t;
+	struct relay_server *relay_server;
 	union {
 		struct socket_message sm;
 		struct cb_socket_message cb_sm;
@@ -107,6 +120,9 @@ typedef int (*ioa_engine_new_connection_event_handler)(ioa_engine_handle e, stru
 typedef int (*ioa_engine_udp_event_handler)(relay_server_handle rs, struct message_to_relay *sm);
 
 #define TURN_CMSG_SZ (65536)
+
+#define PREDEF_TIMERS_NUM (14)
+extern const int predef_timer_intervals[PREDEF_TIMERS_NUM];
 
 struct _ioa_engine
 {
@@ -133,6 +149,8 @@ struct _ioa_engine
   band_limit_t max_bpj;
   ioa_timer_handle timer_ev;
   s08bits cmsg[TURN_CMSG_SZ+1];
+  int predef_timer_intervals[PREDEF_TIMERS_NUM];
+  struct timeval predef_timers[PREDEF_TIMERS_NUM];
 };
 
 #define SOCKET_MAGIC (0xABACADEF)
@@ -150,6 +168,7 @@ struct _ioa_socket
 	SOCKET_TYPE st;
 	SOCKET_APP_TYPE sat;
 	SSL* ssl;
+	char orig_ctx_type[16];
 	int bound;
 	int local_addr_known;
 	ioa_addr local_addr;
@@ -159,7 +178,7 @@ struct _ioa_socket
 	struct event *read_event;
 	ioa_net_event_handler read_cb;
 	void *read_ctx;
-	volatile int done;
+	int done;
 	void* session;
 	int current_df_relay_flag;
 	/* RFC6156: if IPv6 is involved, do not use DF: */
@@ -185,9 +204,6 @@ struct _ioa_socket
 	accept_cb acb;
 	void *acbarg;
 	/* <<== RFC 6062 */
-	const char *func;
-	const char *file;
-	int line;
 };
 
 typedef struct _timer_event
@@ -237,6 +253,7 @@ int ssl_read(evutil_socket_t fd, SSL* ssl, s08bits* buffer, int buf_size, int ve
 int set_raw_socket_ttl_options(evutil_socket_t fd, int family);
 int set_raw_socket_tos_options(evutil_socket_t fd, int family);
 
+int set_socket_options_fd(evutil_socket_t fd, int tcp, int family);
 int set_socket_options(ioa_socket_handle s);
 
 /////////////////////////////////////////////////

@@ -742,7 +742,8 @@ public:
 		u08bits *suname=(u08bits*)strdup(uname.c_str());
 		u08bits *srealm=(u08bits*)strdup(realm.c_str());
 		u08bits *supwd=(u08bits*)strdup(upwd.c_str());
-		bool ret = (0< stun_check_message_integrity_str(ct,_buffer, _sz, suname, srealm, supwd));
+		SHATYPE sht = SHATYPE_SHA1;
+		bool ret = (0< stun_check_message_integrity_str(ct,_buffer, _sz, suname, srealm, supwd, &sht));
 		free(suname);
 		free(srealm);
 		free(supwd);
@@ -763,7 +764,7 @@ public:
 		u08bits *supwd=(u08bits*)strdup(upwd.c_str());
 		u08bits *snonce=(u08bits*)strdup(nonce.c_str());
 
-		stun_attr_add_integrity_by_user_str(_buffer, &_sz, suname, srealm, supwd, snonce);
+		stun_attr_add_integrity_by_user_str(_buffer, &_sz, suname, srealm, supwd, snonce, SHATYPE_SHA1);
 
 		free(suname);
 		free(srealm);
@@ -783,7 +784,7 @@ public:
 		u08bits *suname=(u08bits*)strdup(uname.c_str());
 		u08bits *supwd=(u08bits*)strdup(upwd.c_str());
 
-		stun_attr_add_integrity_by_user_short_term_str(_buffer, &_sz, suname, supwd);
+		stun_attr_add_integrity_by_user_short_term_str(_buffer, &_sz, suname, supwd, SHATYPE_SHA1);
 
 		free(suname);
 		free(supwd);
@@ -847,8 +848,8 @@ public:
 	/**
 	 * Construct allocate request
 	 */
-	void constructAllocateRequest(u32bits lifetime, int address_family, u08bits transport) {
-		stun_set_allocate_request_str(_buffer, &_sz, lifetime, address_family, transport);
+	void constructAllocateRequest(u32bits lifetime, int address_family, u08bits transport, int mobile) {
+		stun_set_allocate_request_str(_buffer, &_sz, lifetime, address_family, transport, mobile);
 	}
 
 	/**
@@ -1013,13 +1014,13 @@ public:
 					   const ioa_addr &relayed_addr,
 					   const ioa_addr &reflexive_addr,
 					   u32bits lifetime, int error_code, const u08bits *reason,
-					   u64bits reservation_token) {
+					   u64bits reservation_token, char *mobile_id) {
 
 		stun_set_allocate_response_str(_buffer, &_sz, &tid,
 						   &relayed_addr,
 						   &reflexive_addr,
 						   lifetime, error_code, reason,
-						   reservation_token);
+						   reservation_token, mobile_id);
 	}
 
 	/**

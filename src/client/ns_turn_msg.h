@@ -152,12 +152,12 @@ int stun_attr_get_first_addr_str(const u08bits *buf, size_t len, u16bits attr_ty
 int stun_attr_add_channel_number_str(u08bits* buf, size_t *len, u16bits chnumber);
 u16bits stun_attr_get_first_channel_number_str(const u08bits *buf, size_t len);
 
-int stun_set_allocate_request_str(u08bits* buf, size_t *len, u32bits lifetime, int address_family, u08bits transport);
+int stun_set_allocate_request_str(u08bits* buf, size_t *len, u32bits lifetime, int address_family, u08bits transport, int mobile);
 int stun_set_allocate_response_str(u08bits* buf, size_t *len, stun_tid* tid, 
 				   const ioa_addr *relayed_addr,
 				   const ioa_addr *reflexive_addr,
 				   u32bits lifetime, int error_code, const u08bits *reason,
-				   u64bits reservation_token);
+				   u64bits reservation_token, char *mobile_id);
 
 u16bits stun_set_channel_bind_request_str(u08bits* buf, size_t *len,
 					  const ioa_addr* peer_addr, u16bits channel_number);
@@ -175,18 +175,18 @@ void print_bin_func(const char *name, size_t len, const void *s, const char *fun
 /*
  * Return -1 if failure, 0 if the integrity is not correct, 1 if OK
  */
-int stun_check_message_integrity_by_key_str(turn_credential_type ct, u08bits *buf, size_t len, hmackey_t key, st_password_t pwd);
-int stun_check_message_integrity_str(turn_credential_type ct, u08bits *buf, size_t len, u08bits *uname, u08bits *realm, u08bits *upwd);
-int stun_attr_add_integrity_str(turn_credential_type ct, u08bits *buf, size_t *len, hmackey_t key, st_password_t pwd);
-int stun_attr_add_integrity_by_user_str(u08bits *buf, size_t *len, u08bits *uname, u08bits *realm, u08bits *upwd, u08bits *nonce);
-int stun_attr_add_integrity_by_user_short_term_str(u08bits *buf, size_t *len, u08bits *uname, st_password_t pwd);
+int stun_check_message_integrity_by_key_str(turn_credential_type ct, u08bits *buf, size_t len, hmackey_t key, st_password_t pwd, SHATYPE *shatype);
+int stun_check_message_integrity_str(turn_credential_type ct, u08bits *buf, size_t len, u08bits *uname, u08bits *realm, u08bits *upwd, SHATYPE *shatype);
+int stun_attr_add_integrity_str(turn_credential_type ct, u08bits *buf, size_t *len, hmackey_t key, st_password_t pwd, SHATYPE shatype);
+int stun_attr_add_integrity_by_user_str(u08bits *buf, size_t *len, u08bits *uname, u08bits *realm, u08bits *upwd, u08bits *nonce, SHATYPE shatype);
+int stun_attr_add_integrity_by_user_short_term_str(u08bits *buf, size_t *len, u08bits *uname, st_password_t pwd, SHATYPE shatype);
 
 /*
  * To be implemented in utilities
  */
 
 int stun_produce_integrity_key_str(u08bits *uname, u08bits *realm, u08bits *upwd, hmackey_t key);
-int stun_calculate_hmac(u08bits *buf, size_t len, u08bits *key, size_t sz, u08bits *hmac);
+int stun_calculate_hmac(const u08bits *buf, size_t len, const u08bits *key, size_t sz, u08bits *hmac, unsigned int *hmac_len, SHATYPE shatype);
 
 /* RFC 5780 */
 int stun_attr_get_change_request_str(stun_attr_ref attr, int *change_ip, int *change_port);
@@ -195,6 +195,9 @@ int stun_attr_get_response_port_str(stun_attr_ref attr);
 int stun_attr_add_response_port_str(u08bits *buf, size_t *len, u16bits port);
 int stun_attr_get_padding_len_str(stun_attr_ref attr);
 int stun_attr_add_padding_str(u08bits *buf, size_t *len, u16bits padding_len);
+
+/* HTTP */
+int is_http_get(const char *s, size_t blen);
 
 ///////////////////////////////////////////////////////////////
 

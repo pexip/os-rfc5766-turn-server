@@ -46,9 +46,12 @@ typedef u64bits turnsession_id;
 
 #define NONCE_MAX_SIZE (NONCE_LENGTH_32BITS*4+1)
 
+typedef u64bits mobile_id_t;
+
 typedef struct {
   void* server; 
   turnsession_id id;
+  turn_time_t start_time;
   ts_ur_session client_session;
   ioa_addr default_peer_addr;
   allocation alloc;
@@ -61,17 +64,76 @@ typedef struct {
   int enforce_fingerprints;
   int is_tcp_relay;
   int to_be_closed;
+  SHATYPE shatype;
   /* Stats */
   u32bits received_packets;
   u32bits sent_packets;
   u32bits received_bytes;
   u32bits sent_bytes;
+  u64bits t_received_packets;
+  u64bits t_sent_packets;
+  u64bits t_received_bytes;
+  u64bits t_sent_bytes;
+  u64bits received_rate;
+  size_t sent_rate;
+  size_t total_rate;
+  /* Mobile */
+  int is_mobile;
+  mobile_id_t mobile_id;
+  char s_mobile_id[33];
 } ts_ur_super_session;
+
+////// Session info for statistics //////
+
+#define TURN_ADDR_STR_SIZE (65)
+#define TURN_MAIN_PEERS_ARRAY_SIZE (5)
+
+typedef struct _addr_data {
+	ioa_addr addr;
+	char saddr[TURN_ADDR_STR_SIZE];
+} addr_data;
+
+struct turn_session_info {
+	turnsession_id id;
+	int valid;
+	turn_time_t start_time;
+	turn_time_t expiration_time;
+	SOCKET_TYPE client_protocol;
+	SOCKET_TYPE peer_protocol;
+	char tls_method[17];
+	char tls_cipher[65];
+	addr_data local_addr_data;
+	addr_data remote_addr_data;
+	addr_data relay_addr_data;
+	u08bits username[STUN_MAX_USERNAME_SIZE+1];
+	int enforce_fingerprints;
+	SHATYPE shatype;
+/* Stats */
+	u64bits received_packets;
+	u64bits sent_packets;
+	u64bits received_bytes;
+	u64bits sent_bytes;
+	u32bits received_rate;
+	u32bits sent_rate;
+    u32bits total_rate;
+/* Mobile */
+	int is_mobile;
+/* Peers */
+	addr_data main_peers_data[TURN_MAIN_PEERS_ARRAY_SIZE];
+	size_t main_peers_size;
+	addr_data *extra_peers_data;
+	size_t extra_peers_size;
+};
+
+void turn_session_info_init(struct turn_session_info* tsi);
+void turn_session_info_clean(struct turn_session_info* tsi);
+void turn_session_info_add_peer(struct turn_session_info* tsi, ioa_addr *peer);
+
+int turn_session_info_copy_from(struct turn_session_info* tsi, ts_ur_super_session *ss);
 
 ////////////// ss /////////////////////
 
 allocation* get_allocation_ss(ts_ur_super_session *ss);
-int shutdown_client_connection_ss(ts_ur_super_session *ss);
 
 ///////////////////////////////////////////////////////
 

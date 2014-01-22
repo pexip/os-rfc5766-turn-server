@@ -68,7 +68,7 @@ int turn_mutex_destroy(turn_mutex* mutex);
 /////// Sockets //////////////////////////////
 
 #define IOA_EV_TIMEOUT	0x01
-#define IOA_EV_READ	0x02
+#define IOA_EV_READ		0x02
 #define IOA_EV_WRITE	0x04
 #define IOA_EV_SIGNAL	0x08
 #define IOA_EV_CLOSE	0x10
@@ -202,6 +202,8 @@ int get_ioa_socket_from_reservation(ioa_engine_handle e, u64bits in_reservation_
 int get_ioa_socket_address_family(ioa_socket_handle s);
 SOCKET_TYPE get_ioa_socket_type(ioa_socket_handle s);
 SOCKET_APP_TYPE get_ioa_socket_app_type(ioa_socket_handle s);
+const char* get_ioa_socket_tls_method(ioa_socket_handle s);
+const char* get_ioa_socket_tls_cipher(ioa_socket_handle s);
 void set_ioa_socket_app_type(ioa_socket_handle s, SOCKET_APP_TYPE sat);
 ioa_addr* get_local_addr_from_ioa_socket(ioa_socket_handle s);
 ioa_addr* get_remote_addr_from_ioa_socket(ioa_socket_handle s);
@@ -213,16 +215,27 @@ void *get_ioa_socket_sub_session(ioa_socket_handle s);
 void set_ioa_socket_sub_session(ioa_socket_handle s, void *tc);
 int register_callback_on_ioa_socket(ioa_engine_handle e, ioa_socket_handle s, int event_type, ioa_net_event_handler cb, void *ctx, int clean_preexisting);
 int send_data_from_ioa_socket_nbh(ioa_socket_handle s, ioa_addr* dest_addr, ioa_network_buffer_handle nbh, int ttl, int tos);
-#define close_ioa_socket(s) close_ioa_socket_func((s),__FUNCTION__,__FILE__,__LINE__)
-void close_ioa_socket_func(ioa_socket_handle s, const char *func, const char *file, int line);
-ioa_socket_handle detach_ioa_socket(ioa_socket_handle s);
-#define IOA_CLOSE_SOCKET(S) do { if(S) { close_ioa_socket_func(S,__FUNCTION__,__FILE__,__LINE__); S = NULL; } } while(0)
+void close_ioa_socket(ioa_socket_handle s);
+#define IOA_CLOSE_SOCKET(S) do { if(S) { close_ioa_socket(S); S = NULL; } } while(0)
+ioa_socket_handle detach_ioa_socket(ioa_socket_handle s, int full_detach);
+void detach_socket_net_data(ioa_socket_handle s);
 int set_df_on_ioa_socket(ioa_socket_handle s, int value);
 void set_do_not_use_df(ioa_socket_handle s);
-int ioa_socket_tobeclosed_func(ioa_socket_handle s, const char *func, const char *file, int line);
-#define ioa_socket_tobeclosed(s) ioa_socket_tobeclosed_func((s),__FUNCTION__,__FILE__,__LINE__)
+int ioa_socket_tobeclosed(ioa_socket_handle s);
 void set_ioa_socket_tobeclosed(ioa_socket_handle s);
 void close_ioa_socket_after_processing_if_necessary(ioa_socket_handle s);
+
+////////////////// Base64 /////////////////////////////
+
+char *base64_encode(const unsigned char *data,
+                    size_t input_length,
+                    size_t *output_length);
+
+void build_base64_decoding_table(void);
+
+unsigned char *base64_decode(const char *data,
+                             size_t input_length,
+                             size_t *output_length);
 
 ///////////////////////////////////////
 
