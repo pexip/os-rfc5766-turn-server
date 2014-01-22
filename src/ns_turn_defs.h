@@ -31,8 +31,8 @@
 #ifndef __IOADEFS__
 #define __IOADEFS__
 
-#define TURN_SERVER_VERSION "2.6.5.2"
-#define TURN_SERVER_VERSION_NAME "Harding Grim"
+#define TURN_SERVER_VERSION "3.2.2.1"
+#define TURN_SERVER_VERSION_NAME "Marshal West"
 #define TURN_SOFTWARE "Citrix-"TURN_SERVER_VERSION" '"TURN_SERVER_VERSION_NAME"'"
 
 #if (defined(__unix__) || defined(unix)) && !defined(USG)
@@ -149,6 +149,24 @@ typedef u32bits turn_time_t;
 			((char*)(dst))[sizeof((dst))-1] = 0; \
 		}\
 	} while(0)
+
+////////////////// Security ////////////////////////////
+
+#define SHA1SIZEBYTES (20)
+#define SHA256SIZEBYTES (32)
+
+#define MAXSHASIZE (128)
+
+enum _SHATYPE {
+	SHATYPE_SHA1 = 0,
+	SHATYPE_SHA256
+};
+
+typedef enum _SHATYPE SHATYPE;
+
+#define shatype_name(sht) ((sht == SHATYPE_SHA1) ? "SHA1" : ((sht == SHATYPE_SHA256) ? "SHA256" : "SHA UNKNOWN"))
+
+#define SHA_TOO_WEAK (426)
 
 ////////////////////////////////////////////////////////
 

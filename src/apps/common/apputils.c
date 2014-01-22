@@ -33,6 +33,8 @@
 
 #include "apputils.h"
 
+#include <event2/event.h>
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,9 +47,7 @@
 #include <libgen.h>
 #include <fcntl.h>
 
-#if !defined(TURN_NO_THREADS)
 #include <pthread.h>
-#endif
 
 #include <signal.h>
 
@@ -64,7 +64,7 @@ int IS_TURN_SERVER = 0;
 
 int socket_set_nonblocking(evutil_socket_t fd)
 {
-#ifdef WIN32
+#if defined(WIN32)
 	unsigned long nonblocking = 1;
     ioctlsocket(fd, FIONBIO, (unsigned long*) &nonblocking);
 #else
@@ -99,8 +99,7 @@ int set_sock_buf_size(evutil_socket_t fd, int sz0)
 
 	if (sz < 1) {
 		perror("Cannot set socket rcv size");
-		TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "Cannot set rcv sock size %d on fd %d\n", sz, fd);
-		return -1;
+		TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "Cannot set rcv sock size %d on fd %d\n", sz0, fd);
 	}
 
 	sz = sz0;
@@ -114,8 +113,7 @@ int set_sock_buf_size(evutil_socket_t fd, int sz0)
 
 	if (sz < 1) {
 		perror("Cannot set socket snd size");
-		TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "Cannot set snd sock size %d on fd %d\n", sz, fd);
-		return -1;
+		TURN_LOG_FUNC(TURN_LOG_LEVEL_INFO, "Cannot set snd sock size %d on fd %d\n", sz0, fd);
 	}
 
 	return 0;
@@ -233,7 +231,7 @@ int addr_connect(evutil_socket_t fd, const ioa_addr* addr, int *out_errno)
 	}
 }
 
-int addr_bind_func(evutil_socket_t fd, const ioa_addr* addr, const char *file, const char *func, int line)
+int addr_bind(evutil_socket_t fd, const ioa_addr* addr)
 {
 	if (!addr || fd < 0) {
 
@@ -263,7 +261,7 @@ int addr_bind_func(evutil_socket_t fd, const ioa_addr* addr, const char *file, c
 			perror("bind");
 			char str[129];
 			addr_to_string(addr,(u08bits*)str);
-			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "(%s:%s:%d) Trying to bind fd %d to <%s>: errno=%d\n", file,func,line,fd, str, err);
+			TURN_LOG_FUNC(TURN_LOG_LEVEL_ERROR, "Trying to bind fd %d to <%s>: errno=%d\n", fd, str, err);
 		}
 		return ret;
 	}
@@ -539,7 +537,13 @@ char *skip_blanks(char* s)
 #define ETCDIR INSTALL_PREFIX/etc/
 #define QETCDIR QUOTE(ETCDIR)
 
-static const char *config_file_search_dirs[] = {"./", "./etc/", "../etc/", "/etc/", "/usr/local/etc/", QETCDIR, NULL };
+#define ETCDIR1 INSTALL_PREFIX/etc/turnserver/
+#define QETCDIR1 QUOTE(ETCDIR1)
+
+#define ETCDIR2 INSTALL_PREFIX/etc/rfc5766-turn-server/
+#define QETCDIR2 QUOTE(ETCDIR2)
+
+static const char *config_file_search_dirs[] = {"./", "./turnserver/", "./rfc5766-turn-server/", "./etc/", "./etc/turnserver/", "./etc/rfc5766-turn-server/", "../etc/", "../etc/turnserver/", "../etc/rfc5766-turn-server/", "/etc/", "/etc/turnserver/", "/etc/rfc5766-turn-server/", "/usr/local/etc/", "/usr/local/etc/turnserver/", "/usr/local/etc/rfc5766-turn-server/", QETCDIR, QETCDIR1, QETCDIR2, NULL };
 static char *c_execdir=NULL;
 
 void set_execdir(void)
@@ -598,7 +602,7 @@ char* find_config_file(const char *config_file, int print_file_name)
 	char *full_path_to_config_file = NULL;
 
 	if (config_file && config_file[0]) {
-		if (config_file[0] == '/') {
+		if ((config_file[0] == '/')||(config_file[0] == '~')) {
 			FILE *f = fopen(config_file, "r");
 			if (f) {
 				fclose(f);
@@ -672,15 +676,22 @@ char* find_config_file(const char *config_file, int print_file_name)
 
 /////////////////// SYS SETTINGS ///////////////////////
 
-void set_system_parameters(int max_resources)
+void ignore_sigpipe(void)
+{
+	/* Ignore SIGPIPE from TCP sockets */
+	if(signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
+		perror("Cannot set SIGPIPE handler");
+	}
+}
+
+unsigned long set_system_parameters(int max_resources)
 {
 	srandom((unsigned int) time(NULL));
 	setlocale(LC_ALL, "C");
 
 	build_base64_decoding_table();
 
-	/* Ignore SIGPIPE from TCP sockets */
-	signal(SIGPIPE, SIG_IGN);
+	ignore_sigpipe();
 
 	if(max_resources) {
 		struct rlimit rlim;
@@ -691,8 +702,11 @@ void set_system_parameters(int max_resources)
 			while((setrlimit(RLIMIT_NOFILE, &rlim)<0) && (rlim.rlim_cur>0)) {
 				rlim.rlim_cur = rlim.rlim_cur>>1;
 			}
+			return (unsigned long)rlim.rlim_cur;
 		}
 	}
+
+	return 0;
 }
 
 ////////////////////// Base 64 ////////////////////////////
@@ -765,71 +779,111 @@ unsigned char *base64_decode(const char *data,
     unsigned char *decoded_data = (unsigned char*)turn_malloc(*output_length);
     if (decoded_data == NULL) return NULL;
 
-    size_t i,j;
-    for (i = 0, j = 0; i < input_length;) {
+    int i;
+    size_t j;
+    for (i = 0, j = 0; i < (int)input_length;) {
 
-        u32bits sextet_a = 0;
-        if(data[i] != '=')
-        	sextet_a = (u32bits)decoding_table[(int)data[i]];
-        ++i;
-        u32bits sextet_b = 0;
-        if(data[i] != '=')
-        	sextet_b = (u32bits)decoding_table[(int)data[i]];
-        ++i;
-        u32bits sextet_c = 0;
-        if(data[i] != '=')
-        	sextet_c = (u32bits)decoding_table[(int)data[i]];
-        ++i;
-        u32bits sextet_d = 0;
-        if(data[i] != '=')
-        	sextet_c = (u32bits)decoding_table[(int)data[i]];
+		uint32_t sextet_a =
+				data[i] == '=' ? 0 & i++ : decoding_table[(int)data[i++]];
+		uint32_t sextet_b =
+				data[i] == '=' ? 0 & i++ : decoding_table[(int)data[i++]];
+		uint32_t sextet_c =
+				data[i] == '=' ? 0 & i++ : decoding_table[(int)data[i++]];
+		uint32_t sextet_d =
+				data[i] == '=' ? 0 & i++ : decoding_table[(int)data[i++]];
 
-        ++i;
+		uint32_t triple = (sextet_a << 3 * 6) + (sextet_b << 2 * 6)
+				+ (sextet_c << 1 * 6) + (sextet_d << 0 * 6);
 
-        u32bits triple = (sextet_a << 3 * 6)
-        + (sextet_b << 2 * 6)
-        + (sextet_c << 1 * 6)
-        + (sextet_d << 0 * 6);
+		if (j < *output_length)
+			decoded_data[j++] = (triple >> 2 * 8) & 0xFF;
+		if (j < *output_length)
+			decoded_data[j++] = (triple >> 1 * 8) & 0xFF;
+		if (j < *output_length)
+			decoded_data[j++] = (triple >> 0 * 8) & 0xFF;
 
-        if (j < *output_length) decoded_data[j++] = (triple >> 2 * 8) & 0xFF;
-        if (j < *output_length) decoded_data[j++] = (triple >> 1 * 8) & 0xFF;
-        if (j < *output_length) decoded_data[j++] = (triple >> 0 * 8) & 0xFF;
     }
 
     return decoded_data;
 }
 
-/////////////////////////// HMAC ////////////////////////////
+////////////////// SSL /////////////////////
 
-#if defined(__USE_OPENSSL__)
-
-#include <openssl/md5.h>
-#include <openssl/hmac.h>
-#include <openssl/ssl.h>
-
-int calculate_hmac(u08bits *buf, size_t len, const void *key, int key_len, u08bits *hmac, unsigned int *hmac_len)
+static const char* turn_get_method(const SSL_METHOD *method)
 {
-	if (!HMAC(EVP_sha1(), key, key_len, buf, len, hmac, hmac_len)) {
-		return -1;
-	} else {
-		return 0;
+	{
+		if(!method)
+			return "NULL";
+		else {
+
+#ifndef OPENSSL_NO_SSL2
+			if(method == SSLv2_server_method()) {
+					return "SSLv2";
+			} else if(method == SSLv2_client_method()) {
+					return "SSLv2";
+			} else
+#endif
+
+			if(method == SSLv3_server_method()) {
+				return "SSLv3";
+			} else if(method == SSLv3_client_method()) {
+				return "SSLv3";
+			} else if(method == SSLv23_server_method()) {
+					return "SSLv23";
+			} else if(method == SSLv23_client_method()) {
+					return "SSLv23";
+			} else if(method == TLSv1_server_method()) {
+					return "TLSv1.0";
+			} else if(method == TLSv1_client_method()) {
+				return "TLSv1.0";
+#if defined(SSL_TXT_TLSV1_1)
+			} else if(method == TLSv1_1_server_method()) {
+					return "TLSv1.1";
+			} else if(method == TLSv1_1_client_method()) {
+				return "TLSv1.1";
+#if defined(SSL_TXT_TLSV1_2)
+			} else if(method == TLSv1_2_server_method()) {
+					return "TLSv1.2";
+			} else if(method == TLSv1_2_client_method()) {
+				return "TLSv1.2";
+#endif
+#endif
+#if !defined(TURN_NO_DTLS)
+			} else if(method == DTLSv1_server_method()) {
+					return "DTLSv1.0";
+			} else if(method == DTLSv1_client_method()) {
+				return "DTLSv1.0";
+#endif
+			} else {
+				return "UNKNOWN";
+			}
+		}
+	}
+
+}
+
+const char* turn_get_ssl_method(SSL *ssl)
+{
+	if(!ssl)
+		return "EMPTY";
+	else {
+		const SSL_METHOD *method = SSL_get_ssl_method(ssl);
+		if(!method)
+			return "NULL";
+		else
+			return turn_get_method(method);
 	}
 }
 
-#else
+//////////// EVENT BASE ///////////////
 
-int calculate_hmac(u08bits *buf, size_t len, const void *key, int key_len, u08bits *hmac, unsigned int *hmac_len)
+struct event_base *turn_event_base_new(void)
 {
-	UNUSED_ARG(buf);
-	UNUSED_ARG(len);
-	UNUSED_ARG(key);
-	UNUSED_ARG(key_len);
-	UNUSED_ARG(hmac);
-	UNUSED_ARG(hmac_len);
+	struct event_config *cfg = event_config_new();
 
-	return -1;
+	event_config_set_flag(cfg,EVENT_BASE_FLAG_EPOLL_USE_CHANGELIST);
+
+	return event_base_new_with_config(cfg);
 }
-
-#endif
 
 //////////////////////////////////////////////////////////////

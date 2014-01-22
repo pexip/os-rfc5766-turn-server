@@ -79,7 +79,7 @@ typedef enum _TURN_TLS_TYPE TURN_TLS_TYPE;
 
 ///////////////////////// Sockets ///////////////////////////////
 
-#ifdef WIN32
+#if defined(WIN32)
 /** Do the platform-specific call needed to close a socket returned from
     socket() or accept(). */
 #define socket_closesocket(s) closesocket(s)
@@ -99,8 +99,7 @@ int socket_tcp_set_keepalive(evutil_socket_t fd);
 
 int addr_connect(evutil_socket_t fd, const ioa_addr* addr, int *out_errno);
 
-int addr_bind_func(evutil_socket_t fd, const ioa_addr* addr, const char *file, const char *func, int line);
-#define addr_bind(fd,addr) addr_bind_func((fd),(addr),__FILE__,__FUNCTION__,__LINE__)
+int addr_bind(evutil_socket_t fd, const ioa_addr* addr);
 
 int addr_get_from_sock(evutil_socket_t fd, ioa_addr *addr);
 
@@ -108,7 +107,8 @@ int handle_socket_error(void);
 
 /////////////////////// SYS /////////////////////
 
-void set_system_parameters(int max_resources);
+void ignore_sigpipe(void);
+unsigned long set_system_parameters(int max_resources);
 
 ///////////////////////// MTU //////////////////////////
 
@@ -145,9 +145,13 @@ unsigned char *base64_decode(const char *data,
                              size_t input_length,
                              size_t *output_length);
 
-//////////////////// HMAC ///////////////////////////
+///////////// SSL ////////////////
 
-int calculate_hmac(u08bits *buf, size_t len, const void *key, int key_len, u08bits *hmac, unsigned int *hmac_len);
+const char* turn_get_ssl_method(SSL *ssl);
+
+//////////// Event Base /////////////////////
+
+struct event_base *turn_event_base_new(void);
 
 ///////////////////////////////////////////////////////
 

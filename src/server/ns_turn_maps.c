@@ -231,166 +231,558 @@ int ur_map_unlock(const ur_map* map) {
   return -1;
 }
 
-////////////////////  ADDR LISTS ///////////////////////////////////
+//////////////////// LOCAL MAPS ////////////////////////////////////
 
-typedef struct _addr_list {
-  struct _addr_list* next;
-} addr_list;
-
-typedef struct _addr_elem {
-  addr_list list;
-  ur_addr_map_key_base_type key;
-  ur_addr_map_value_type value;
-} addr_elem;
-
-typedef struct _addr_list_header {
-  addr_list *list;
-} addr_list_header;
-
-static size_t addr_list_size(const addr_list *sl) {
-  if(!sl) return 0;
-  return 1+addr_list_size(sl->next);
+void lm_map_init(lm_map *map)
+{
+	if(map) {
+		ns_bzero(map,sizeof(lm_map));
+	}
 }
+
+/**
+ * @ret:
+ * 0 - success
+ * -1 - error
+ */
+
+int lm_map_put(lm_map* map, ur_map_key_type key, ur_map_value_type value)
+{
+	int ret = -1;
+	if(map && key && value) {
+
+		size_t index = (size_t)(key & (LM_MAP_HASH_SIZE - 1));
+		lm_map_array *a = &(map->table[index]);
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_ARRAY_SIZE;++i) {
+
+			ur_map_key_type key0 = a->main_keys[i];
+			ur_map_value_type value0 = a->main_values[i];
+
+			if(key0 == key) {
+				if(value0 == value) {
+					return 0;
+				} else {
+					return -1;
+				}
+			}
+
+			if(!key0 || !value0) {
+				a->main_keys[i] = key;
+				a->main_values[i] = value;
+				return 0;
+			}
+		}
+
+		size_t esz = a->extra_sz;
+		if(esz && a->extra_keys && a->extra_values) {
+			for(i=0;i<esz;++i) {
+				ur_map_key_type *keyp = a->extra_keys[i];
+				ur_map_value_type *valuep = a->extra_values[i];
+				if(keyp && valuep) {
+					if(!(*keyp) || !(*valuep)) {
+						*keyp = key;
+						*valuep = value;
+						return 0;
+					}
+				} else {
+					if(!(*keyp)) {
+						a->extra_keys[i] = (ur_map_key_type*)turn_malloc(sizeof(ur_map_key_type));
+						keyp = a->extra_keys[i];
+					}
+					if(!(*valuep)) {
+						a->extra_values[i] = (ur_map_value_type*)turn_malloc(sizeof(ur_map_value_type));
+						valuep = a->extra_values[i];
+					}
+					*keyp = key;
+					*valuep = value;
+					return 0;
+				}
+			}
+		}
+
+		size_t old_sz = esz;
+		size_t old_sz_mem = esz * sizeof(ur_map_key_type*);
+		a->extra_keys = (ur_map_key_type**)turn_realloc(a->extra_keys,old_sz_mem,old_sz_mem + sizeof(ur_map_key_type*));
+		a->extra_keys[old_sz] = (ur_map_key_type*)turn_malloc(sizeof(ur_map_key_type));
+		*(a->extra_keys[old_sz]) = key;
+
+		old_sz_mem = esz * sizeof(ur_map_value_type*);
+		a->extra_values = (ur_map_value_type**)turn_realloc(a->extra_values,old_sz_mem,old_sz_mem + sizeof(ur_map_value_type*));
+		a->extra_values[old_sz] = (ur_map_value_type*)turn_malloc(sizeof(ur_map_value_type));
+		*(a->extra_values[old_sz]) = value;
+
+		a->extra_sz += 1;
+
+		return 0;
+	}
+	return ret;
+}
+
+/**
+ * @ret:
+ * 1 - success
+ * 0 - not found
+ */
+
+int lm_map_get(const lm_map* map, ur_map_key_type key, ur_map_value_type *value)
+{
+	int ret = 0;
+	if(map && key) {
+		size_t index = (size_t)(key & (LM_MAP_HASH_SIZE - 1));
+		const lm_map_array *a = &(map->table[index]);
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_ARRAY_SIZE;++i) {
+
+			ur_map_key_type key0 = a->main_keys[i];
+			if((key0 == key) && a->main_values[i]) {
+				if(value) {
+					*value = a->main_values[i];
+				}
+				return 1;
+			}
+		}
+
+		size_t esz = a->extra_sz;
+		if(esz && a->extra_keys && a->extra_values) {
+			for(i=0;i<esz;++i) {
+				ur_map_key_type *keyp = a->extra_keys[i];
+				ur_map_value_type *valuep = a->extra_values[i];
+				if(keyp && valuep) {
+					if(*keyp == key) {
+						if(value)
+							*value = *valuep;
+						return 1;
+					}
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+/**
+ * @ret:
+ * 1 - success
+ * 0 - not found
+ */
+
+int lm_map_del(lm_map* map, ur_map_key_type key,ur_map_del_func delfunc)
+{
+	int ret = 0;
+
+	if(map && key) {
+		size_t index = (size_t)(key & (LM_MAP_HASH_SIZE - 1));
+		lm_map_array *a = &(map->table[index]);
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_ARRAY_SIZE;++i) {
+
+			ur_map_key_type key0 = a->main_keys[i];
+
+			if((key0 == key) && a->main_values[i]) {
+				if(delfunc) {
+					delfunc(a->main_values[i]);
+				}
+				a->main_keys[i] = 0;
+				a->main_values[i] = 0;
+				return 1;
+			}
+		}
+
+		size_t esz = a->extra_sz;
+		if(esz && a->extra_keys && a->extra_values) {
+			for(i=0;i<esz;++i) {
+				ur_map_key_type *keyp = a->extra_keys[i];
+				ur_map_value_type *valuep = a->extra_values[i];
+				if(keyp && valuep) {
+					if(*keyp == key) {
+						if(delfunc)
+							delfunc(*valuep);
+						*keyp = 0;
+						*valuep = 0;
+						return 1;
+					}
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+/**
+ * @ret:
+ * 1 - success
+ * 0 - not found
+ */
+
+int lm_map_exist(const lm_map* map, ur_map_key_type key)
+{
+	return lm_map_get(map, key, NULL);
+}
+
+void lm_map_clean(lm_map* map)
+{
+	size_t j;
+	for(j=0;j<LM_MAP_HASH_SIZE;++j) {
+
+		lm_map_array *a = &(map->table[j]);
+
+		size_t esz = a->extra_sz;
+		if(esz) {
+			size_t i;
+			if(a->extra_keys) {
+				for(i=0;i<esz;++i) {
+					ur_map_key_type *keyp = a->extra_keys[i];
+					if(keyp) {
+						*keyp = 0;
+						turn_free(keyp,sizeof(ur_map_key_type));
+					}
+				}
+				turn_free(a->extra_keys,esz * sizeof(ur_map_key_type));
+				a->extra_keys = NULL;
+			}
+			if(a->extra_values) {
+				for(i=0;i<esz;++i) {
+					ur_map_value_type *valuep = a->extra_values[i];
+					if(valuep) {
+						*valuep = 0;
+						turn_free(valuep,sizeof(ur_map_value_type));
+					}
+				}
+				turn_free(a->extra_values,esz * sizeof(ur_map_value_type));
+				a->extra_values = NULL;
+			}
+		}
+	}
+
+	lm_map_init(map);
+}
+
+size_t lm_map_size(const lm_map* map)
+{
+	size_t ret = 0;
+
+	if(map) {
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_HASH_SIZE;++i) {
+
+			const lm_map_array *a = &(map->table[i]);
+
+			size_t j;
+
+			for(j=0;j<LM_MAP_ARRAY_SIZE;++j) {
+				if(a->main_keys[j] && a->main_values[j]) {
+					++ret;
+				}
+			}
+
+			size_t esz = a->extra_sz;
+			if(esz && a->extra_values && a->extra_keys) {
+				for(j=0;j<esz;++j) {
+					if(*(a->extra_keys[j]) && *(a->extra_values[j])) {
+						++ret;
+					}
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+
+int lm_map_foreach(lm_map* map, foreachcb_type func)
+{
+	size_t ret = 0;
+
+	if(map) {
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_HASH_SIZE;++i) {
+
+			lm_map_array *a = &(map->table[i]);
+
+			size_t j;
+
+			for(j=0;j<LM_MAP_ARRAY_SIZE;++j) {
+				if(a->main_keys[j] && a->main_values[j]) {
+					if(func((ur_map_key_type)a->main_keys[j],
+						(ur_map_value_type)a->main_values[j])) {
+						return 1;
+					}
+				}
+			}
+
+			size_t esz = a->extra_sz;
+			if(esz && a->extra_values && a->extra_keys) {
+				for(j=0;j<esz;++j) {
+					if(*(a->extra_keys[j]) && *(a->extra_values[j])) {
+						if(func((ur_map_key_type)*(a->extra_keys[j]),
+							(ur_map_value_type)*(a->extra_values[j]))) {
+							return 1;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+
+int lm_map_foreach_arg(lm_map* map, foreachcb_arg_type func, void* arg)
+{
+	size_t ret = 0;
+
+	if(map) {
+
+		size_t i;
+
+		for(i=0;i<LM_MAP_HASH_SIZE;++i) {
+
+			lm_map_array *a = &(map->table[i]);
+
+			size_t j;
+
+			for(j=0;j<LM_MAP_ARRAY_SIZE;++j) {
+				if(a->main_keys[j] && a->main_values[j]) {
+					if(func((ur_map_key_type)a->main_keys[j],
+						(ur_map_value_type)a->main_values[j],
+						arg)) {
+						return 1;
+					}
+				}
+			}
+
+			size_t esz = a->extra_sz;
+			if(esz && a->extra_values && a->extra_keys) {
+				for(j=0;j<esz;++j) {
+					if(*(a->extra_keys[j]) && *(a->extra_values[j])) {
+						if(func((ur_map_key_type)*(a->extra_keys[j]),
+							(ur_map_value_type)*(a->extra_values[j]),
+							arg)) {
+							return 1;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ret;
+}
+
+////////////////////  ADDR LISTS ///////////////////////////////////
 
 static void addr_list_free(addr_list_header* slh) {
   if(slh) {
-    addr_list* list=slh->list;
-    while(list) {
-      addr_elem *elem=(addr_elem*)list;
-      addr_list* tail=elem->list.next;
-      turn_free(elem,sizeof(addr_elem));
-      list=tail;
+    if(slh->extra_list) {
+      turn_free(slh->extra_list,sizeof(addr_elem)*(slh->extra_sz));
     }
+    ns_bzero(slh,sizeof(addr_list_header));
   }
 }
     
-static addr_list* addr_list_add(addr_list* sl, const ur_addr_map_key_type key,  ur_addr_map_value_type value) {
-  if(!key) return sl;
-  addr_elem *elem=(addr_elem*)turn_malloc(sizeof(addr_elem));
-  elem->list.next=sl;
+static void addr_list_add(addr_list_header* slh, const ioa_addr* key,  ur_addr_map_value_type value) {
+
+  if(!key) return;
+
+  addr_elem *elem = NULL;
+  size_t i;
+
+  for(i=0;i<ADDR_ARRAY_SIZE;++i) {
+	  if(!(slh->main_list[i].allocated)) {
+		  elem = &(slh->main_list[i]);
+		  break;
+	  }
+  }
+
+  if(!elem && slh->extra_list) {
+	  for(i=0;i<slh->extra_sz;++i) {
+		  if(!(slh->extra_list[i].allocated)) {
+			  elem = &(slh->extra_list[i]);
+			  break;
+		  }
+	  }
+  }
+
+  if(!elem) {
+	  size_t old_sz = slh->extra_sz;
+	  size_t old_sz_mem = old_sz * sizeof(addr_elem);
+	  slh->extra_list = (addr_elem*)turn_realloc(slh->extra_list, old_sz_mem, old_sz_mem + sizeof(addr_elem));
+	  elem = &(slh->extra_list[old_sz]);
+	  slh->extra_sz += 1;
+  }
+
+  elem->allocated = 1;
   addr_cpy(&(elem->key),key);
   elem->value=value;
-  return &(elem->list);
 }
 
-static addr_list* addr_list_remove(addr_list* sl, const ur_addr_map_key_type key, 
+static void addr_list_remove(addr_list_header* slh, const ioa_addr* key,
 				   ur_addr_map_func delfunc, int *counter) {
-  if(!sl || !key) return sl;
-  addr_elem *elem=(addr_elem*)sl;
-  addr_list* tail=elem->list.next;
-  if(addr_eq(&(elem->key),key)) {
-    if(delfunc && elem->value) delfunc(elem->value);
-    turn_free(elem,sizeof(addr_elem));
-    if(counter) *counter+=1;
-    sl=addr_list_remove(tail, key, delfunc, counter);
-  } else {
-    elem->list.next=addr_list_remove(tail,key,delfunc,counter);
-  }
-  return sl;
-}
+  if(!slh || !key) return;
 
-static addr_list* addr_list_remove_by_ip(addr_list* sl, const ur_addr_map_key_type key,
-					   ur_addr_map_func delfunc, int *counter) {
-  if(!sl || !key) return sl;
-  addr_elem *elem=(addr_elem*)sl;
-  addr_list* tail=elem->list.next;
-  if(addr_eq_no_port(&(elem->key),key)) {
-    if(delfunc && elem->value) delfunc(elem->value);
-    turn_free(elem,sizeof(addr_elem));
-    if(counter) *counter+=1;
-    sl=addr_list_remove_by_ip(tail, key, delfunc, counter);
-  } else {
-    elem->list.next=addr_list_remove_by_ip(tail,key,delfunc,counter);
-  }
-  return sl;
-}
+  if(counter)
+	  *counter = 0;
 
-static void addr_list_foreach(addr_list* sl,  ur_addr_map_func func) {
-  if(sl && func) {
-	  addr_elem *elem=(addr_elem*)sl;
-	  addr_list* tail=elem->list.next;
-	  func(elem->value);
-	  addr_list_foreach(tail, func);
-  }
-}
+  size_t i;
 
-static void addr_list_foreach_arg(addr_list* sl,  ur_addr_map_func_arg func, void *arg) {
-  if(sl && func) {
-	  addr_elem *elem=(addr_elem*)sl;
-	  addr_list* tail=elem->list.next;
-	  func(&(elem->key), elem->value, arg);
-	  addr_list_foreach_arg(tail, func, arg);
+  for(i=0;i<ADDR_ARRAY_SIZE;++i) {
+	addr_elem *elem=&(slh->main_list[i]);
+	if(elem->allocated) {
+		if(addr_eq(&(elem->key),key)) {
+			if(delfunc && elem->value)
+				delfunc(elem->value);
+			elem->allocated = 0;
+			if(counter) {
+			  *counter += 1;
+			}
+		}
+	}
+  }
+
+  if(slh->extra_list) {
+  	  for(i=0;i<slh->extra_sz;++i) {
+  		  addr_elem *elem=&(slh->extra_list[i]);
+  		  if(elem->allocated) {
+  			  if(addr_eq(&(elem->key),key)) {
+  				  if(delfunc && elem->value)
+  					  delfunc(elem->value);
+  				  elem->allocated = 0;
+  				  if(counter) {
+  					  *counter += 1;
+  				  }
+  			  }
+  		  }
+  	  }
   }
 }
 
-static addr_elem* addr_list_get(addr_list* sl, const ur_addr_map_key_type key) {
+static void addr_list_foreach(addr_list_header* slh,  ur_addr_map_func func) {
+  if(slh && func) {
 
-  if(!sl || !key) return NULL;
+    	  size_t i;
 
-  addr_elem *elem=(addr_elem*)sl;
-  if(addr_eq(&(elem->key),key)) {
-    return elem;
-  } else {
-    addr_list* tail=elem->list.next;
-    return addr_list_get(tail, key);
+    	  for(i=0;i<ADDR_ARRAY_SIZE;++i) {
+    		  addr_elem *elem=&(slh->main_list[i]);
+    		  if(elem->allocated) {
+    			  func(elem->value);
+    		  }
+    	  }
+
+	  if(slh->extra_list) {
+	    	  for(i=0;i<slh->extra_sz;++i) {
+	    		  addr_elem *elem=&(slh->extra_list[i]);
+	    		  if(elem->allocated) {
+	    			func(elem->value);
+	    		  }
+	    	  }
+	    }
   }
+}
+
+static addr_elem* addr_list_get(addr_list_header* slh, const ioa_addr* key) {
+
+  if(!slh || !key) return NULL;
+
+  size_t i;
+
+  for(i=0;i<ADDR_ARRAY_SIZE;++i) {
+	  addr_elem *elem=&(slh->main_list[i]);
+	  if(elem->allocated) {
+		  if(addr_eq(&(elem->key),key)) {
+			  return elem;
+		  }
+	  }
+  }
+
+  if(slh->extra_list) {
+    	  for(i=0;i<slh->extra_sz;++i) {
+    		  addr_elem *elem=&(slh->extra_list[i]);
+    		  if(elem->allocated) {
+    			  if(addr_eq(&(elem->key),key)) {
+    				  return elem;
+    			  }
+    		  }
+    	  }
+  }
+
+  return NULL;
+}
+
+static const addr_elem* addr_list_get_const(const addr_list_header* slh, const ioa_addr* key) {
+
+  if(!slh || !key) return NULL;
+
+  size_t i;
+
+  for(i=0;i<ADDR_ARRAY_SIZE;++i) {
+	  const addr_elem *elem=&(slh->main_list[i]);
+	  if(elem->allocated) {
+		  if(addr_eq(&(elem->key),key)) {
+			  return elem;
+		  }
+	  }
+  }
+
+  if(slh->extra_list) {
+    	  for(i=0;i<slh->extra_sz;++i) {
+    		  const addr_elem *elem=&(slh->extra_list[i]);
+    		  if(elem->allocated) {
+    			  if(addr_eq(&(elem->key),key)) {
+    				  return elem;
+    			  }
+    		  }
+    	  }
+  }
+
+  return NULL;
 }
 
 ////////// ADDR MAPS ////////////////////////////////////////////
 
-#define DEFAULT_ADDR_MAP_SIZE (1021)
-
-struct _ur_addr_map {
-  addr_list_header *lists;
-  u32bits size;
-  u64bits magic;
-  TURN_MUTEX_DECLARE(mutex)
-};
-
-static int addr_map_index(const ur_addr_map *map, ur_addr_map_key_type key) {
+static int addr_map_index(ioa_addr* key) {
   u32bits hash = addr_hash(key);
-  if(map->size)
-	  hash = hash % map->size;
+  hash = hash & (ADDR_MAP_SIZE - 1);
   return (int)hash;
 }
 
-static addr_list_header* get_addr_list_header(ur_addr_map *map, ur_addr_map_key_type key) {
-  return &(map->lists[addr_map_index(map,key)]);
+static addr_list_header* get_addr_list_header(ur_addr_map *map, ioa_addr* key) {
+  return &(map->lists[addr_map_index(key)]);
 }
 
-static const addr_list_header* get_addr_list_header_const(const ur_addr_map *map, ur_addr_map_key_type key) {
-  return &(map->lists[addr_map_index(map,key)]);
-}
-
-static int ur_addr_map_init(ur_addr_map* map, u32bits size) {
-  if(map) {
-    ns_bzero(map,sizeof(ur_addr_map));
-    map->magic=MAGIC_HASH;
-    if(size)
-	    map->size = size;
-    else
-	    map->size = DEFAULT_ADDR_MAP_SIZE;
-
-    map->lists = (addr_list_header*)turn_malloc(sizeof(addr_list_header) * (map->size));
-    ns_bzero(map->lists,sizeof(addr_list_header) * (map->size));
-
-    TURN_MUTEX_INIT_RECURSIVE(&(map->mutex));
-    return 0;
-  }
-  return -1;
+static const addr_list_header* get_addr_list_header_const(const ur_addr_map *map, ioa_addr* key) {
+  return &(map->lists[addr_map_index(key)]);
 }
 
 static int ur_addr_map_valid(const ur_addr_map *map) {
   return (map && map->magic==MAGIC_HASH);
 }
 
-ur_addr_map* ur_addr_map_create(u32bits size) {
-  ur_addr_map *map=(ur_addr_map*)turn_malloc(sizeof(ur_addr_map));
-  if(ur_addr_map_init(map,size)<0) {
-    turn_free(map,sizeof(ur_addr_map));
-    return NULL;
+void ur_addr_map_init(ur_addr_map* map) {
+  if(map) {
+    ns_bzero(map,sizeof(ur_addr_map));
+    map->magic=MAGIC_HASH;
   }
-  return map;
+}
+
+void ur_addr_map_clean(ur_addr_map* map) {
+  if(map && ur_addr_map_valid(map)) {
+    u32bits i=0;
+    for(i=0;i<ADDR_MAP_SIZE;i++) {
+      addr_list_free(&(map->lists[i]));
+    }
+    ns_bzero(map,sizeof(ur_addr_map));
+  }
 }
 
 /**
@@ -399,7 +791,7 @@ ur_addr_map* ur_addr_map_create(u32bits size) {
  * -1 - error
  * if the addr key exists, the value is updated.
  */
-int ur_addr_map_put(ur_addr_map* map, ur_addr_map_key_type key, ur_addr_map_value_type value) {
+int ur_addr_map_put(ur_addr_map* map, ioa_addr* key, ur_addr_map_value_type value) {
 
   if(!ur_addr_map_valid(map)) return -1;
 
@@ -407,11 +799,11 @@ int ur_addr_map_put(ur_addr_map* map, ur_addr_map_key_type key, ur_addr_map_valu
 
     addr_list_header* slh = get_addr_list_header(map, key);
 
-    addr_elem* elem = addr_list_get(slh->list, key);
+    addr_elem* elem = addr_list_get(slh, key);
     if(elem) {
       elem->value=value;
     } else {
-      slh->list=addr_list_add(slh->list,key,value);
+      addr_list_add(slh,key,value);
     }
 
     return 0;
@@ -423,7 +815,7 @@ int ur_addr_map_put(ur_addr_map* map, ur_addr_map_key_type key, ur_addr_map_valu
  * 1 - success
  * 0 - not found
  */
-int ur_addr_map_get(const ur_addr_map* map, ur_addr_map_key_type key, ur_addr_map_value_type *value) {
+int ur_addr_map_get(const ur_addr_map* map, ioa_addr* key, ur_addr_map_value_type *value) {
 
   if(!ur_addr_map_valid(map)) return 0;
 
@@ -431,7 +823,7 @@ int ur_addr_map_get(const ur_addr_map* map, ur_addr_map_key_type key, ur_addr_ma
 
     const addr_list_header* slh = get_addr_list_header_const(map, key);
 
-    const addr_elem *elem = addr_list_get(slh->list, key);
+    const addr_elem *elem = addr_list_get_const(slh, key);
     if(elem) {
       if(value) *value=elem->value;
       return 1;
@@ -446,7 +838,7 @@ int ur_addr_map_get(const ur_addr_map* map, ur_addr_map_key_type key, ur_addr_ma
  * 1 - success
  * 0 - not found
  */
-int ur_addr_map_del(ur_addr_map* map, ur_addr_map_key_type key,ur_addr_map_func delfunc) {
+int ur_addr_map_del(ur_addr_map* map, ioa_addr* key,ur_addr_map_func delfunc) {
 
   if(!ur_addr_map_valid(map)) return 0;
 
@@ -456,30 +848,10 @@ int ur_addr_map_del(ur_addr_map* map, ur_addr_map_key_type key,ur_addr_map_func 
 
     int counter=0;
 
-    slh->list=addr_list_remove(slh->list, key, delfunc, &counter);
+    addr_list_remove(slh, key, delfunc, &counter);
 
     return (counter>0);
   }
-}
-
-int ur_addr_map_del_by_ip(ur_addr_map* map, ur_addr_map_key_type key, ur_addr_map_func delfunc)
-{
-
-	if (!ur_addr_map_valid(map))
-		return 0;
-	else {
-
-		int counter = 0;
-		u32bits i = 0;
-		for (i = 0; i < map->size; ++i) {
-
-			addr_list_header* slh = &(map->lists[i]);
-
-			slh->list = addr_list_remove_by_ip(slh->list, key, delfunc, &counter);
-		}
-
-		return (counter > 0);
-	}
 }
 
 /**
@@ -492,72 +864,13 @@ void ur_addr_map_foreach(ur_addr_map* map, ur_addr_map_func func) {
   if(ur_addr_map_valid(map)) {
 
     u32bits i=0;
-    for(i=0;i<map->size;i++) {
+    for(i=0;i<ADDR_MAP_SIZE;i++) {
       
       addr_list_header* slh = &(map->lists[i]);
       
-      addr_list_foreach(slh->list, func);
+      addr_list_foreach(slh, func);
     }
   }
-}
-
-void ur_addr_map_foreach_arg(ur_addr_map* map, ur_addr_map_func_arg func, void *arg) {
-
-  if(ur_addr_map_valid(map)) {
-
-    u32bits i=0;
-    for(i=0;i<map->size;i++) {
-
-      addr_list_header* slh = &(map->lists[i]);
-
-      addr_list_foreach_arg(slh->list, func, arg);
-    }
-  }
-}
-
-void ur_addr_map_free(ur_addr_map** map) {
-  if(map && ur_addr_map_valid(*map)) {
-    u32bits i=0;
-    for(i=0;i<(*map)->size;i++) {
-      addr_list_free(&((*map)->lists[i]));
-    }
-    (*map)->magic=0;
-    turn_free((*map)->lists,sizeof(addr_list_header) * (*map)->size);
-    (*map)->lists = NULL;
-    (*map)->size=0;
-    TURN_MUTEX_DESTROY(&((*map)->mutex));
-    turn_free(*map,sizeof(ur_addr_map));
-    *map=NULL;
-  }
-}
-
-size_t ur_addr_map_size(const ur_addr_map* map) {
-  if(ur_addr_map_valid(map)) {
-    size_t ret=0;
-    u32bits i=0;
-    for(i=0;i<map->size;i++) {
-      ret+=addr_list_size(map->lists[i].list);
-    }
-    return ret;
-  } else {
-    return 0;
-  }
-}
-
-int ur_addr_map_lock(const ur_addr_map* map) {
-  if(ur_addr_map_valid(map)) {
-    TURN_MUTEX_LOCK((const turn_mutex*)&(map->mutex));
-    return 0;
-  }
-  return -1;
-}
-
-int ur_addr_map_unlock(const ur_addr_map* map) {
-  if(ur_addr_map_valid(map)) {
-    TURN_MUTEX_UNLOCK((const turn_mutex*)&(map->mutex));
-    return 0;
-  }
-  return -1;
 }
 
 ////////////////////  STRING LISTS ///////////////////////////////////
